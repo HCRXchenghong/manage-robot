@@ -1,0 +1,6 @@
+# Buf 配置：对 Protobuf 做 lint（规范）与 breaking（破坏性变更）检查
+# 文档：https://buf.build/docs
+# 第 2 步「协议冻结」时在此完善 lint 规则
+version: v2
+modules:
+  - path: protobuf

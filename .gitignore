@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# 构建产物与依赖
+build/
+dist/
+node_modules/
+__pycache__/
+*.pyc
+
+# 环境与密钥（绝不入库）
+.env
+*.key
+*.pem
+
+# 日志
+*.log

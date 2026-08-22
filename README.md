@@ -1,0 +1,48 @@
+# Robot-agent
+
+多自动驾驶系统远程调度与远程驾驶平台（车云平台代码仓库）。
+架构设计文档见工作区根目录的 介绍.md（《技术架构与实施基线》v0.2）。
+
+## 这个仓库是做什么的
+
+一句话：让不同技术栈的自动驾驶车辆（Autoware、Apollo、通用 ROS 2、存量 ROS 1）都接入同一个云平台，在云端看状态、收告警、远程驾驶、管地图和任务。
+
+数据流（大白话）：
+
+    车辆内部消息（ROS 1 / ROS 2 / Apollo）
+      → Adapter 翻译成统一平台消息（Protobuf）
+      → Vehicle Gateway（车上的常驻后台程序）
+      → 双链路（两家运营商）：MQTT / QUIC / WebRTC
+      → 云端边缘接入层 → 云端服务（API、车队、接管控制、地图）
+      → 浏览器 / 远驾客户端（人看到的界面）
+
+## 目录总览
+
+| 目录 | 放什么 | 主要技术 |
+|---|---|---|
+| vehicle/ | 车上的程序：Gateway、适配器、安全仲裁器、视频/终端/地图代理 | Go、C++ |
+| server/ | 云端服务：API、接入、接管控制、车队、地图 | Go |
+| client/ | 远驾客户端核心逻辑与模拟器 | Go |
+| web/ | 浏览器页面：运营、远驾、终端、地图编辑器 | React + TS |
+| protocols/ | 所有端共用的“语言”：Protobuf、VSS、OpenAPI | Protobuf/Buf |
+| media/ | 视频接入、双路合并、分发（SFU） | Go、GStreamer、LiveKit |
+| remote-workspace/ | 远程终端和 RViz 图形远程显示 | 待定 |
+| map-engine/ | 点云地图引擎：转换、分块、版本、发布 | PDAL 等 |
+| deploy/ | 部署：compose / k8s / WAF / 监控 / 证书 | Docker、K8s |
+| tests/ | 协议、弱网、仿真、HIL、安全测试 | 多种 |
+| docs/ | 项目文档 | Markdown |
+
+## 当前进度（对照架构文档第 18 节）
+
+- [x] 第 1 步：仓库目录脚手架（本目录）
+- [ ] 第 2 步：protocols/ —— 冻结第一版 Protobuf 消息和 VSS 扩展
+- [ ] 第 3 步：模拟器（模拟 Vehicle Gateway 和控制客户端）
+- [ ] 第 4 步：最小 Adapter（Autoware/ROS 2、Apollo、ROS 1）
+- [ ] 第 5 步：mTLS 注册、MQTT 遥测、双 QUIC 控制、单路 WebRTC
+
+## 基本原则（摘自架构文档）
+
+1. 车辆最终裁决：控制命令是否执行，由车端安全仲裁器说了算，云端不能绕过。
+2. 过期数据无价值：控制命令宁可丢弃，也不执行旧的。
+3. 链路解耦：控制、视频、业务链路各自独立；双链路消除单点。
+4. ROS 1 是过渡兼容：车端 roscpp Adapter 直连平台协议，不经 ros1_bridge，不强制先迁移；长期方向仍是 ROS 2。
