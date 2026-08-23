@@ -41,7 +41,7 @@
 - [x] 第 5a 步：Vehicle Gateway 骨架（UDS 本地通道 + 心跳 + 控制路由 + 端到端串联）
 - [x] 第 5b 步：mTLS 注册 + MQTT 遥测（开发 CA + mosquitto + paho，端到端验证）
 - [x] 第 5c 步：双 QUIC 控制（控制中继 control-relay + 双链路客户端；三场景验证：双发去重 / 断链存活 / 恢复）
-- [ ] 第 5d 步：单路 WebRTC 视频回传（候选 aiortc）
+- [x] 第 5d 步：单路 WebRTC 视频回传（aiortc + 合成摄像头；端到端验证：收 70 帧/5s，640x360，约 14 fps）
 
 ## 基本原则（摘自架构文档）
 
