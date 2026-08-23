@@ -40,3 +40,23 @@
 | 5 | fencing 倒退 | REJECTED_FENCING |
 | 6 | 目标速度 20 m/s（超 5） | REJECTED_LIMIT |
 | 7 | 恢复正常 | ACCEPTED |
+
+## 断链最小风险（第 6 步，"死人开关"）
+
+遥控不是发一条命令就完事，而是持续的命令流。命令流一断（链路全断），
+车辆绝不能照着最后一条命令一直跑——车端仲裁器内置看门狗：
+
+- 遥控中超过 `WATCHDOG_MS`（默认 800ms）没收到新的**有效**命令 → 判定断链
+- 进入最小风险状态：按 `DECEL_MPS2`（默认 1.2 m/s²）自主减速，直到安全停稳
+- 只有 ACCEPTED 的命令能"续命"；过期/被拒的命令不算数
+- 驾驶员重连后发来通过校验的新命令 → 恢复遥控（重新接管）
+
+三阶段演示（先起 Gateway 和车端组件）：
+
+    python3 vehicle/gateway/gateway.py
+    python3 client/simulator/vehicle_side.py
+    python3 client/simulator/minimum_risk_demo.py
+
+预期：阶段 A 逐条 ✓；阶段 B 约 0.8s 后出现"⚠ 判定链路中断 → 自主减速
+停车"，随后"✓ 车辆已安全停稳"；阶段 C 首条命令"✓ 执行（链路恢复，
+重新接管）"。

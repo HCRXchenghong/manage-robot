@@ -97,6 +97,7 @@ class VehicleSide:
         interval = 1.0 / max(self.hz, 0.01)
         while True:
             time.sleep(interval)
+            self.arb.tick()  # 断链看门狗：周期性判断遥控命令是否断流
             ts = C.mono_ns()
             # 假 can 帧：真实字段结构来自车端 can_msgs
             vs = {"cur_speed": self.arb.speed / adapter.KMH_TO_MPS,
