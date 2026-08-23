@@ -31,6 +31,7 @@ class Authority:
     def __init__(self, gw_addr, lease_seconds):
         self.gw_addr = gw_addr
         self.lease_seconds = lease_seconds
+        self.terminal_seconds = 60.0   # 终端令牌默认有效期（比驾驶租约长：运维会话更久）
         self.fencing = 0            # 全局单调，永不回退
         self.current = None         # (driver, lease_id, until_ns)
 
@@ -54,6 +55,24 @@ class Authority:
         self.current = None
         print(f"[authority] {driver} 交还控制权，租约已撤销")
         return {"ok": True}
+
+    def terminal(self, driver):
+        """第 9 步：发一张终端令牌（远程登录车端电脑用）。
+
+        终端是最危险的接口，同样坚持"先授权再连接"：
+        车端 workspace-agent 只认本服务签发、经 Gateway 送达的令牌。
+        """
+        token = f"term-{uuid.uuid4().hex[:12]}"
+        until = time.time_ns() + int(self.terminal_seconds * 1e9)
+        payload = {"driver_id": driver, "terminal_token": token,
+                   "valid_until_unix_ns": until}
+        env = C.make_envelope("platform.v1.TerminalGrant", payload, "authority",
+                              sequence=self.fencing, ttl_ms=30000)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(json.dumps(env).encode("utf-8"), self.gw_addr)
+        print(f"[authority] 发给 {driver} 终端令牌 {token} "
+              f"有效期 {self.terminal_seconds:.0f}s")
+        return {"ok": True, "token": token, "valid_until_unix_ns": until}
 
     def _push_grant(self, driver, lease_id, fencing, until_ns):
         payload = {"driver_id": driver, "lease_id": lease_id,
@@ -93,6 +112,8 @@ def main():
             resp = auth.request(driver)
         elif op == "release":
             resp = auth.release(driver)
+        elif op == "terminal":
+            resp = auth.terminal(driver)
         else:
             resp = {"ok": False, "error": f"未知操作 {op}"}
         sock.sendto(json.dumps(resp).encode("utf-8"), addr)
@@ -100,4 +121,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

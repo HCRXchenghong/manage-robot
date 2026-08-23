@@ -159,6 +159,13 @@ class Gateway:
                 print(f"[gateway] 租约下发 lease={p.get('lease_id')} "
                       f"fencing={p.get('fencing_token')} -> {n} 个组件")
                 continue
+            if mtype == "platform.v1.TerminalGrant":
+                # 终端令牌下发（第 9 步）：同样是授权先行
+                n = self._forward_to_components({"kind": "terminal", "env": env})
+                p = env.get("payload", {})
+                print(f"[gateway] 终端令牌下发 driver={p.get('driver_id')} "
+                      f"-> {n} 个组件")
+                continue
             if mtype != "platform.v1.ControlCommand":
                 continue
 
