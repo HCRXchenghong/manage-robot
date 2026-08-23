@@ -1,367 +1,290 @@
-# 运营大屏实施计划（第 10 步）
+# 运营大屏实施计划 v2（第 10 步）—— React + Go + PostgreSQL + WAF
 
-状态：待实施 ｜ 产出审核：Codex ｜ 预计工作量：1～2 天（单人）
-仓库：Robot-agent/ ｜ 上游依赖：第 5b 步（mTLS + MQTT）已合入
+状态：待实施 ｜ 产出审核：Codex ｜ 预计工作量：3～5 天（单人）
+技术栈决策（与架构文档阶段 1 一致）：前端 React(TypeScript+Vite)，
+云端服务 Go，PostgreSQL/PostGIS 为业务真相源，nginx 反向代理 + 限流
+作为第一阶段 WAF，OIDC 登录列入第二阶段（配置预留、不阻塞验收）。
 
-> 执行约定：每个任务都有「验收」小节，做完自测通过再进入下一个任务。
-> 全部完成后提交一个或多个 commit（格式见任务 6），由 Codex 按第 5 节清单审核。
+> 执行约定：按任务顺序做，每个任务有「验收」；全部完成后提交，
+> Codex 按第 5 节清单审核。v1 计划（Python hub + 零构建前端）作废。
 
 ---
 
-## 0. 目标
+## 0. 现状架构（as-is，先认清再改）
 
-浏览器打开一个页面，实时看到：
+当前仓库是「阶段 0 验证原型」，全部 Python 单文件脚本：
 
-1. 车辆在线状态（在线/离线、最近心跳距今多久）
-2. 车辆姿态：运行模式（自动驾驶 / 远程驾驶 / 最小风险 / 已停稳）、实时车速曲线
-3. 电池 SoC、电压、挡位
-4. 接管状态：当前谁在驾驶、租约编号、fencing、到期倒计时
-5. 事件流：模式切换、上下线、接管变化、最小风险触发（按严重级别着色）
+- 车端：gateway.py（UDS 接入/预筛/路由）、vehicle_side.py（仲裁器）、
+  ros1 适配器、media-agent（WebRTC/双路视频）、workspace-agent（终端）
+- 云端原型：control-authority（租约/fencing）、control-relay（QUIC）、
+  media-control（收流合并）、vehicle-access（MQTT 接入演示）
+- 传输：车内 UDS；车云 MQTT5(mTLS) / UDP 演示 / QUIC / WebRTC
+- 消息：protocols/ 下 Protobuf 的 JSON 镜像（信封格式见第 2 节）
+- 无数据库（全内存）、无 WAF、无登录、无 Go、无正式前端
 
-数据全部走既有 MQTT 上行（第 5b 步），不新造车端链路；前端零构建、零 CDN。
+定位：这层是「协议与安全逻辑的实验台」，不会被扔掉——车端继续用它做
+参照实现；云端逐个服务用 Go 重写（见第 6 节迁移表）。
 
-## 1. 架构
+## 1. 目标架构（to-be）
 
 ~~~
-车端                                    云端                          浏览器
-vehicle_side.py ─UDS─> gateway.py ─mTLS/MQTT─> mosquitto(ra-mqtt:8883)
-                       (--uplink mqtt)              │
-                                                    ▼
-                              authority_service(:9300) <─UDP轮询─ fleet_hub.py(新, :9800)
-                                                                      │
-                                                       HTTP /api/fleet + SSE /api/events
-                                                                      ▼
-                                                              index.html/app.js
+浏览器 React(Vite+TS)
+   │  HTTPS（nginx：TLS 终结 + 限流 + WAF 基础规则）[OIDC 二期]
+   ▼
+Go fleet-hub（server/fleet/）
+   │  REST /api/*  +  WebSocket /ws/fleet
+   │  订阅 MQTT（paho.mqtt.golang，mTLS，access 证书）
+   ▼
+mosquitto(ra-mqtt:8883) <──mTLS── 车端 gateway(--uplink mqtt)
+   │
+   ▼
+PostgreSQL/PostGIS（业务真相源） + Redis（在线状态缓存，可选）
 ~~~
 
-新增代码只有三处：车端一个小补丁（任务 1）、fleet_hub.py（任务 2）、
-前端三件套（任务 4）；authority 加一个只读查询操作（任务 3）。
+关键原则：前端只依赖「协议契约」（REST/WS 的 JSON = protobuf 镜像），
+不依赖实现语言。后端从 Python 换 Go，前端一行不改——这就是第 2 步先
+冻结协议的价值。
 
-## 2. 现有接口事实（已逐一核对，照抄即可，勿猜测）
+## 2. 现有接口事实（已核对，照抄勿猜）
 
-### 2.1 MQTT
-
-- Broker：容器 ra-mqtt，端口 8883，强制 mTLS（use_identity_as_username，
-  身份=客户端证书 CN）。不要重建容器；用 docker ps 确认在跑。
-- 话题（QoS 1，payload 为 JSON 信封）：
-  - vehicle/sim-veh-001/register —— GatewayCapabilities，retained
-  - vehicle/sim-veh-001/telemetry —— SignalUpdate（2Hz）
-  - vehicle/sim-veh-001/status —— Heartbeat（0.5Hz，约 2 秒一条）
-- 云端侧订阅证书：deploy/pki/dev/ 下 ca.crt + access.crt + access.key
-  （CN=vehicle-access；vehicle-access/access_service.py 用的就是这套）。
-- paho 用法（务必照抄此签名，v2 回调 API）：
-
-~~~python
-import paho.mqtt.client as mqtt
-cli = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
-                  client_id="fleet-hub", protocol=mqtt.MQTTv5)
-cli.tls_set(ca_certs=ca, certfile=cert, keyfile=key)
-cli.on_connect = on_connect   # (client, userdata, flags, reason_code, properties=None)
-cli.on_message = on_message   # (client, userdata, msg)
-cli.connect(host, port, keepalive=15)
-cli.loop_start()
-cli.subscribe("vehicle/#", qos=1)
-~~~
-
-### 2.2 信封（JSON，protobuf 镜像）
-
-字段：schema_major, schema_minor, message_type, vehicle_id, gateway_id,
-session_id, sequence, utc_time_ns, monotonic_time_ns, ttl_ms, trace_id, payload。
-
-SignalUpdate.payload 形如：
-
-~~~json
-{"signals": [{"path": "Vehicle.Speed",
-              "value": {"number": 1.6},
-              "sample_monotonic_ns": 123456789,
-              "quality": "SIGNAL_QUALITY_GOOD"}]}
-~~~
-
-value 里 number 与 text 二选一（按信号类型）。
-
-### 2.3 会收到的信号（vehicle_side 经 ros1 适配器翻译）
-
-| path | 值类型 | 含义 |
-|---|---|---|
-| Vehicle.Speed | number | 车速 m/s |
-| Vehicle.Chassis.SteeringWheel.Angle | number | 方向盘转角 rad |
-| Vehicle.Powertrain.Transmission.CurrentGear | text | 挡位 |
-| Platform.Autonomy.OperationMode | text | 运行模式（任务 1 修好后反映真实状态） |
-| Vehicle.Powertrain.TractionBattery.StateOfCharge | number | SoC，0..1 |
-| Vehicle.Powertrain.TractionBattery.Voltage | number | 电池电压 |
-
-模式取值（车端仲裁器维护，见 client/simulator/vehicle_sim.py 的 Arbiter）：
-autonomous / remote_control / minimum_risk / stopped。
-
-### 2.4 端口表（勿冲突）
-
-| 端口 | 占用 |
-|---|---|
-| 8883 | mosquitto（mTLS） |
-| 9100 | gateway 控制入口（UDP） |
-| 9200 | 云端 UDP 演示通道 |
-| 9300 | authority_service（UDP） |
-| 9443/9444 | QUIC 中继 edge-A/B |
-| 9501/9502 | 双路视频演示 |
-| 9600 | 终端代理 |
-| **9800** | **本步新增：大屏 HTTP** |
-
-### 2.5 环境坑（必读）
-
-- 用 .venv 里的 python 前必须：
-  export DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib
-  （Python 3.14 自带 expat 有 bug，不设会崩）
-- 仓库路径含空格："robot- manage"，shell 里一律加引号
-- 后台进程：分终端跑，或 nohup ... > 日志 2>&1 & ；
-  注意某些 IDE 集成终端关闭时会带走子进程
-- 新依赖：无（paho 已在 .venv；HTTP/SSE 用标准库）
+- MQTT 话题（QoS1，JSON 信封）：vehicle/sim-veh-001/register（retained，
+  GatewayCapabilities）/ telemetry（SignalUpdate，2Hz）/ status（Heartbeat，2s）
+- 云端订阅证书：deploy/pki/dev/ 的 ca.crt + access.crt + access.key
+- 信封字段：schema_major/minor, message_type, vehicle_id, gateway_id,
+  session_id, sequence, utc_time_ns, monotonic_time_ns, ttl_ms, trace_id, payload
+- SignalUpdate.payload.signals[]：path + value(number|text) +
+  sample_monotonic_ns + quality
+- 信号清单：Vehicle.Speed(m/s)、Vehicle.Chassis.SteeringWheel.Angle(rad)、
+  Vehicle.Powertrain.Transmission.CurrentGear、Platform.Autonomy.OperationMode
+  （autonomous/remote_control/minimum_risk/stopped，任务 1 修好后为真值）、
+  Vehicle.Powertrain.TractionBattery.StateOfCharge(0..1)/Voltage
+- 端口：8883 MQTT、9100 控制、9300 authority、9443/9444 QUIC、
+  9501/9502 视频、9600 终端；新增 9800 fleet-hub HTTP
+- 环境坑：.venv python 需 export DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib；
+  仓库路径含空格要加引号；Go 用 brew 的 go（先 go version 确认 >=1.21）
 
 ## 3. 任务分解
 
-### 任务 1：车端上报真实运行模式（小补丁）
+### 任务 1：车端上报真实运行模式（小补丁，同 v1）
 
-文件：client/simulator/vehicle_side.py 的 telemetry_loop。
-现状：is_autodrive 恒为 True，翻译出的 OperationMode 恒为 autonomous，
-大屏看不到接管/最小风险状态变化。
-
-精确改法（在 signals 组装完成后、make_envelope 之前插入覆盖逻辑）：
+client/simulator/vehicle_side.py 的 telemetry_loop，在 signals 组装后、
+make_envelope 前插入：
 
 ~~~python
-            signals = adapter.translate_vehicle_status(vs, ts) + \
-                adapter.translate_battery(bat, ts)
-            # 第 10 步：让大屏看到仲裁器真实状态
-            # （arb.mode ∈ autonomous/remote_control/minimum_risk/stopped）
             for s in signals:
                 if s["path"] == "Platform.Autonomy.OperationMode":
                     s["value"] = {"text": self.arb.mode}
 ~~~
 
-不要改 adapter.py（翻译层保持"只翻译"的职责；覆盖属于演示层决策）。
+验收：起 gateway(--uplink mqtt)+vehicle_side+authority，跑 takeover_demo，
+订阅 telemetry 可见 OperationMode 随阶段变化。
 
-验收：
-1. 起 gateway（--uplink mqtt）+ vehicle_side
-2. 用 2.6 的调试订阅脚本看 /telemetry
-3. 另开终端跑 python3 client/simulator/takeover_demo.py（authority 也要起）
-   应看到 OperationMode 随阶段变化：remote_control -> …（租约到期后
-   看门狗触发）minimum_risk -> stopped
+### 任务 2：Go fleet-hub（server/fleet/，核心）
 
-### 任务 2：车队状态中枢 fleet_hub.py（核心，约 300 行）
+Go 模块：server/fleet/go.mod（module robot-agent/server/fleet）。
+依赖仅：github.com/eclipse/paho.mqtt.golang、github.com/lib/pq
+（或 pgx）、标准库。禁止 Web 框架（标准库 net/http 足够）。
 
-新文件：server/fleet/fleet_hub.py。Python 标准库 + paho，无其他依赖。
+职责与接口：
+1) MQTT 接入：mTLS + access 证书，订阅 vehicle/#；按话题段解析
+2) 状态模型（内存，供 WS/REST 直读）+ 落库（见任务 5 表）：
+   - 在线判定：6 秒无 Heartbeat 即离线（巡检 goroutine 1s）
+   - 信号最新值、车速历史环（150 点）、模式、capabilities
+   - 事件推导：mode 变化（minimum_risk=critical、stopped=warn）、
+     上下线（critical/info）、接管变化（warn/info）；环上限 200
+3) HTTP（:9800，net/http）：
+   - GET /api/fleet        全量快照（schema 同 v1，见下）
+   - GET /api/vehicles/:id 单车详情（含 speed_history、capabilities）
+   - GET /api/events?limit=50  事件列表
+   - WS /ws/fleet          推送 {"type":"state"|"event", ...}，1Hz 状态
+     + 事件即时推；客户端断开要清理 goroutine
+   - GET / 静态服务前端构建产物（go:embed web/dist）
+4) 接管状态：每 1s 向 127.0.0.1:9300 UDP 发 {"op":"status"} 合并进快照
+5) 点云配置接口（给激光雷达地图用）：
+   - GET /api/pointcloud?vehicle_id=  返回该车点云（阶段 1 返回内置合成
+     场景的 JSON；阶段 2 换 COPC/PCD 切片，接口不变）
 
-职责：
-1) MQTT 接入：按 2.1 连接，订阅 vehicle/#，按话题第二、三段解析
-   （第二段=vehicle_id，第三段=register|telemetry|status|misc）
-2) 内存状态模型（dict，vehicle_id -> 车辆状态）：
-   - online：6 秒内收到过 /status 的 Heartbeat 即在线（心跳 2s 一条，
-     3 条容忍）；用 monotonic 计时，单独线程每 1s 巡检超时
-   - signals：path -> {"value": ..., "ts_ns": utc_time_ns}（存最新值）
-   - speed_history：collections.deque(maxlen=150)，每收到
-     Vehicle.Speed 追加一次（2Hz ≈ 75 秒曲线）
-   - mode：取自 Platform.Autonomy.OperationMode
-   - capabilities：来自 /register（retained，连上就会收到）
-3) 事件推导（事件结构见下），环形上限 200 条：
-   - mode 变化：minimum_risk=critical，stopped=warn，
-     remote_control/autonomous=info（文本示例："模式切换：
-     remote_control -> minimum_risk"）
-   - 在线<->离线：离线=critical，恢复=info
-   - 接管状态变化（来自任务 3 轮询）：新接管=info，到期/撤销=warn
-4) HTTP 服务（http.server.ThreadingHTTPServer，:9800）：
-   - GET /api/fleet -> 快照 JSON（schema 见下）
-   - GET /api/events -> SSE：先回放最近 50 条（event: init），
-     之后每来一条新事件推一行（event: new）；客户端断开要能
-     捕获 BrokenPipeError/ConnectionError 并清理该客户端
-   - GET / 及其他路径 -> 静态目录 server/fleet/web/
-     （用 functools.partial(SimpleHTTPRequestHandler, directory=...)）
-5) 接管状态轮询：线程每 1s 向 127.0.0.1:9300 发
-   {"op": "status"}（UDP，超时 0.5s），结果并入 /api/fleet 与事件流
-
-线程安全：所有共享状态用一把 threading.Lock；SSE 客户端列表同样。
-事件结构：
+/api/fleet 快照 schema（前端唯一契约）：
 
 ~~~json
-{"ts_ns": 1787400000000000000, "level": "critical",
- "vehicle_id": "sim-veh-001", "text": "模式切换：remote_control -> minimum_risk"}
+{"server_time_ns": 0,
+ "vehicles": [{"vehicle_id":"sim-veh-001","online":true,
+   "last_heartbeat_age_s":1.2,"mode":"remote_control","speed_mps":1.5,
+   "soc":0.78,"voltage":48.6,"gear":"D","steer_rad":-0.2,
+   "speed_history":[1.4,1.5],"capabilities":{"stack":"AUTONOMY_STACK_ROS1"},
+   "pose":{"x":120.0,"y":80.0,"yaw":0.6}}],
+ "takeover":{"active":true,"driver":"zhangsan","lease_id":"LEASE-x",
+   "fencing":2,"seconds_left":3.4},
+ "events":[{"ts_ns":0,"level":"critical","vehicle_id":"...","text":"..."}]}
 ~~~
 
-/api/fleet 快照 schema：
-
-~~~json
-{
-  "server_time_ns": 1787400000000000000,
-  "vehicles": [{
-    "vehicle_id": "sim-veh-001",
-    "online": true,
-    "last_heartbeat_age_s": 1.2,
-    "mode": "remote_control",
-    "speed_mps": 1.5,
-    "signals": {"Vehicle.Speed": {"number": 1.5}},
-    "speed_history": [1.4, 1.5, 1.5],
-    "capabilities": {"stack": "AUTONOMY_STACK_ROS1"}
-  }],
-  "takeover": {"active": true, "driver": "driver-B",
-               "lease_id": "lease-abc", "fencing": 2,
-               "seconds_left": 3.4}
-}
-~~~
-
-takeover 无接管时为 {"active": false}；seconds_left 由
-(valid_until_unix_ns - server 当前墙钟)/1e9 计算。
+pose 字段：阶段 1 由 hub 内置演示位姿表（每车固定坐标）；阶段 2 接定位。
 
 验收：
-1. 起链路后 curl 127.0.0.1:9800/api/fleet：有车辆、online=true、
-   speed_history 在增长（隔 2 秒 curl 两次对比）
-2. curl -N 127.0.0.1:9800/api/events：先收到 init 事件包，之后
-   运行任意演示脚本能看到 new 事件滚出
-3. 杀掉 vehicle_side：6 秒内 /api/fleet 里 online 变 false 且事件流
-   出现离线 critical 事件
+1) go vet ./... && go build ./... 通过
+2) 起链路后 curl /api/fleet 有车、online=true；隔 2s 两次 speed_history 增长
+3) websocat 或浏览器连 /ws/fleet，杀 vehicle_side 后 6s 内收到离线事件
+4) 内存无泄漏：跑 10 分钟 goroutine 数稳定（/debug/pprof 可选）
 
-### 任务 3：authority 增加只读状态查询（小补丁）
+### 任务 3：authority 增加 status 只读查询（同 v1，小补丁）
 
-文件：server/control-authority/authority_service.py。
-在 main() 的 op 分发处增加一个分支，并在 Authority 类里实现：
+server/control-authority/authority_service.py 增加 op=status 分支
+（只读，不改状态、不下发信封），返回 active/driver/lease_id/fencing/
+valid_until_unix_ns。验收：手工 UDP 查询 + takeover_demo 过程中查询。
 
-~~~python
-    def status(self):
-        if self.current and self.current[2] > time.time_ns():
-            d, lid, until = self.current
-            return {"ok": True, "active": True, "driver": d,
-                    "lease_id": lid, "fencing": self.fencing,
-                    "valid_until_unix_ns": until}
-        return {"ok": True, "active": False}
+### 任务 4：React 前端（web/ops-dashboard/，Vite + TS）
+
+依赖白名单：react、react-dom、typescript、vite、three、
+@react-three/fiber、xterm、@xterm/addon-fit。禁止任何 CDN/外链运行时资源。
+
+结构：
+
+~~~
+web/ops-dashboard/
+  package.json  vite.config.ts（dev 代理 /api、/ws -> 127.0.0.1:9800）
+  src/main.tsx  src/App.tsx（侧栏路由，7 个分类）
+  src/api.ts（REST + WebSocket；连不上自动降级 src/mock.ts 演示数据）
+  src/mock.ts（与 UI 预览图同款的演示数据）
+  src/pages/ Overview Vehicles VehicleDetail Drive Video Alerts Terminal
+  src/components/ TopBar StatCards LidarView VehicleTable EventFeed
+                  TakeoverPanel TerminalPanel VideoPanel
 ~~~
 
-注意：这是只读操作，不改变任何状态、不下发任何信封。
+页面/组件规格（与 UI 预览图一致）：
+- 顶栏：MQTT 服务器/网关心跳状态点、当前时间；左 logo「燃石创想
+  数字孪生运维平台」；底部侧栏管理员 admin
+- 侧栏 7 分类：总览大屏 / 车辆列表 / 车辆详情 / 远程驾驶·接管 /
+  视频监控 / 告警与事件 / 远程终端
+- 总览：5 张统计卡（在线/总数、行驶中、接管人数、告警数、链路健康度）
+  + 激光雷达地图（LidarView）+ 三栏面板（列表+告警 | 详情+视频 |
+  接管+终端），按钮齐全：自动刷新、全屏投屏、时间范围、刷新、
+  申请接管、续租、交还控制权、紧急停车（红色、二次确认）、播放/全屏/
+  截图/机位、打开终端/断开/重连、标记已读、导出日志
+- 车辆列表：搜索 + 状态筛选页签 + 表格（ID/状态/模式/车速/电量/心跳），
+  行点击联动详情与地图
+- 告警：级别筛选 + 车辆筛选 + 列表 + 导出
+
+LidarView 激光雷达点云规格（重点）：
+1) 2D 鸟瞰 / 3D 轨道一键切换；拖拽旋转(3D)/平移(2D)、滚轮缩放、点大小可调
+2) 多车同屏：每车点云按 pose 放入统一世界系；颜色按状态
+   （绿=行驶、黄=空闲、灰=离线、红=告警）；静态基础设施点为暗蓝
+3) 点车标签或表格行 -> 高亮该车 + 视角跟随
+4) 数据源可配置：默认调 /api/pointcloud；「配置点云」按钮可本地加载
+   JSON/CSV（每行 x,y,z[,intensity]），加载后替换静态场景、保留车辆
+5) 性能：THREE.Points + BufferGeometry，10 万点内流畅；超出降采样
+6) 图例面板（在线行驶/在线空闲/离线/告警中）与缩放/复位/2D/3D 控件
+
+TerminalPanel：xterm.js 连车端（阶段 1 走 hub 代理的模拟回显即可，
+接口预留 WS /ws/terminal；阶段 2 接 workspace-agent 真实 PTY）。
 
 验收：
-1. 手工验证：向 :9300 发 {"op":"status"}，无接管时返回
-   {"ok": true, "active": false}
-2. 跑 takeover_demo 过程中再查，能返回 active/lease/driver/fencing
+1) npm run build 通过，产物被 Go embed 后单二进制可开页面
+2) 无后端时打开（mock 降级）页面完整可交互
+3) 有后端时：列表/详情/事件/接管倒计时全部真实数据；地图 2D/3D 切换、
+   加载自定义点云、多车高亮三项逐项通过
+4) 紧急停车后 2s 内模式变 stopped 且事件流出 critical
 
-### 任务 4：前端三件套（零构建、零 CDN、全中文）
+### 任务 5：PostgreSQL 与迁移（server/migrations/0001_init.sql）
 
-新目录：server/fleet/web/，文件：index.html、app.js、style.css。
-
-布局（深色大屏）：
-- 顶栏：标题"车云运营大屏" ｜ 在线车辆 x/y ｜ 当前时间
-- 主区左侧：每辆车一张卡片
-  * 大号车速（m/s，一位小数）+ canvas 速度曲线（画 speed_history）
-  * 模式徽章：autonomous=蓝 / manual=黄 / remote_control=绿 /
-    minimum_risk=红且闪烁 / stopped=灰
-  * 电池：SoC 百分比进度条 + 电压 + 挡位
-  * 底部小字：最近心跳 x.x 秒前
-- 主区右侧：
-  * 接管面板：驾驶员 / 租约 / fencing / 到期倒计时（秒，保留一位小数）；
-    无接管时显示"当前无人接管"
-  * 事件流：最新在上，最多显示 50 条；info=灰白、warn=琥珀、
-    critical=红；每条含时间（时:分:秒）与文本
-
-实现要求：
-- 数据：setInterval 每 1s fetch /api/fleet 全量刷新（简单可靠）；
-  事件流用 EventSource 连 /api/events（init 回放 + new 增量）
-- 倒计时：用 /api/fleet 的 server_time_ns 与 takeover 到期时间差，
-  本地按秒递减，不依赖浏览器墙钟
-- 曲线参考实现（可改，效果等价即可）：
-
-~~~js
-function drawSpark(canvas, data) {
-  var ctx = canvas.getContext("2d");
-  var w = canvas.width, h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-  if (!data || data.length < 2) return;
-  var maxV = Math.max(5, Math.max.apply(null, data));
-  ctx.beginPath();
-  for (var i = 0; i < data.length; i++) {
-    var x = i / (data.length - 1) * w;
-    var y = h - 2 - (data[i] / maxV) * (h - 6);
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.strokeStyle = "#22d3ee";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-}
+~~~sql
+CREATE TABLE vehicles (
+  id TEXT PRIMARY KEY, gateway_id TEXT, stack TEXT, vin TEXT,
+  cert_until TIMESTAMPTZ, first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen TIMESTAMPTZ);
+CREATE TABLE vehicle_state (
+  vehicle_id TEXT PRIMARY KEY REFERENCES vehicles(id),
+  online BOOLEAN NOT NULL DEFAULT false, mode TEXT,
+  speed_mps DOUBLE PRECISION, soc DOUBLE PRECISION,
+  voltage DOUBLE PRECISION, gear TEXT, steer_rad DOUBLE PRECISION,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE telemetry_samples (
+  vehicle_id TEXT NOT NULL, ts TIMESTAMPTZ NOT NULL,
+  path TEXT NOT NULL, num DOUBLE PRECISION, txt TEXT);
+CREATE INDEX idx_telemetry ON telemetry_samples (vehicle_id, ts DESC);
+CREATE TABLE events (
+  id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  vehicle_id TEXT, level TEXT NOT NULL, text TEXT NOT NULL);
+CREATE TABLE leases (
+  id TEXT PRIMARY KEY, driver TEXT NOT NULL, fencing BIGINT NOT NULL,
+  vehicle_id TEXT, valid_from TIMESTAMPTZ NOT NULL DEFAULT now(),
+  valid_until TIMESTAMPTZ NOT NULL, state TEXT NOT NULL DEFAULT 'active');
+CREATE TABLE audit_logs (
+  id BIGSERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor TEXT NOT NULL, action TEXT NOT NULL, detail JSONB);
 ~~~
 
-- 配色建议：背景 #0b0f14，卡片 #121821，主色 #22d3ee，
-  warn #f59e0b，critical #ef4444
-- 禁止：任何外部 CDN/字体/图表库；禁止构建工具
+- deploy/compose/postgres.yml：postgres:16 + 挂载 migrations；hub 启动时
+  幂等执行迁移（schema_migrations 表记录版本）
+- 所有 SQL 必须参数化（$1...），禁止字符串拼接
+- 遥测采样落库做 1Hz 抽稀（不全量存 2Hz），保留策略注释写明
 
-验收：
-1. 浏览器打开 127.0.0.1:9800 看到车辆卡片、曲线在动
-2. 断开车端进程：卡片在约 6 秒后显示离线态
-3. 断网刷新页面：页面自身不崩（接口失败时静默重试）
+验收：docker compose up -d 后 hub 自动建表；跑演示后 psql 查询
+vehicles/vehicle_state/events/leases 有数据；重复重启 hub 迁移不报错。
 
-### 任务 5：端到端演示编排 + 最终验收
+### 任务 6：入口与 WAF（deploy/compose/ingress.yml + nginx.conf）
 
-新文件：deploy/demo/dashboard_demo.sh（zsh/bash 均可），职责：
-1. 检查 mosquitto 容器在跑（docker ps），不在则提示启动命令并退出
-2. 依次 nohup 启动：gateway --uplink mqtt、vehicle_side、
-   authority_service、fleet_hub（日志到 /tmp/ra-demo-*.log）
-3. 打印：大屏地址、各日志路径、停止方式（给出 pkill 清单）
-4. 提示后续手工演示顺序（见下）
+- nginx 反代 :443 -> fleet-hub:9800，TLS 终结（复用 deploy/pki/dev 或
+  自签新证书），限流（limit_req 10r/s 突发 20）、禁隐藏路径、
+  安全头（CSP、X-Frame-Options、HSTS）
+- OIDC（dex 或企业 IdP）列为阶段 2：本期只在 nginx 留 auth_request
+  注释位与前端登录页占位路由，不阻塞验收
+- 验收：curl -k https://127.0.0.1/ 200；连续 100 次请求触发 429 可见；
+  安全头齐全（curl -kI 检查）
 
-最终验收剧本（人工执行，边做边看页面；全部符合才算本步完成）：
+### 任务 7：端到端演示编排 + 最终验收
 
-| # | 操作 | 页面预期 |
+deploy/demo/dashboard_demo.sh：检查 mosquitto/postgres -> 起
+gateway(--uplink mqtt)、vehicle_side、authority、fleet-hub（go run 或
+编译产物）-> 打印 https 地址与日志路径。
+
+验收剧本（人工，边做边看）：
+
+| # | 操作 | 预期 |
 |---|---|---|
-| a | 只起基础链路 | 在线 1 辆，模式=autonomous，车速基线约 1.6，曲线在走 |
-| b | 跑 takeover_demo.py | 接管面板出现 driver-A -> driver-B，倒计时走；模式变 remote_control；到期后命令被拒 |
-| c | 跑 minimum_risk_demo.py | 模式 remote_control -> minimum_risk（红色闪烁）-> stopped；事件流出 critical；速度曲线降到 0 |
-| d | kill vehicle_side | 约 6 秒后卡片变离线，事件流出 critical"离线" |
+| a | 只起基础链路 | 在线 1 辆、模式 autonomous、速度曲线走、地图见车 |
+| b | takeover_demo | 接管面板 driver 变化、倒计时走；模式 remote_control |
+| c | minimum_risk_demo | 模式 minimum_risk(红)->stopped；事件 critical；曲线归零 |
+| d | kill vehicle_side | 6s 内离线；事件 critical |
+| e | 地图操作 | 2D/3D 切换、缩放旋转、加载自定义点云、多车高亮 |
 
-### 任务 6：文档、进度与提交
+### 任务 8：文档与提交
 
-1. 新文件 server/fleet/README.md：参考现有各模块 README 风格
-   （当前实现/演示方法/后续生产化），说明 fleet_hub 的职责与接口
-2. 根 README.md"当前进度"清单末尾追加一行：
-   - [x] 第 10 步：运营大屏（fleet_hub 汇聚 MQTT 遥测 + 接管状态，
-     Web 实时展示：在线/模式/车速曲线/电池/接管倒计时/事件流）
-3. git 提交（可分任务多次提交，最终至少包含一个汇总）：
-   feat(10): 运营大屏（fleet_hub + SSE 推送 + 零依赖前端，剧本 a-d 全通过）
-4. 提交前自查：git status 干净；无 /tmp 文件、无调试脚本混入
+- server/fleet/README.md、web/ops-dashboard/README.md（风格同既有）
+- 根 README 进度追加：- [x] 第 10 步：运营大屏（React + Go fleet-hub +
+  PostgreSQL + nginx/WAF 一期；激光雷达 2D/3D 点云地图、多车同屏）
+- commit：feat(10): 运营大屏（React 前端 + Go fleet-hub + PG + 点云地图）
 
-## 4. 审核清单（Codex 将逐项检查）
+## 4. 审核清单（Codex 逐项检查）
 
-1. 无新增第三方依赖；前端无任何 CDN/外链
-2. MQTT 连接为 mTLS + access 证书；paho 用 CallbackAPIVersion.VERSION2
-3. fleet_hub 共享状态全部加锁；SSE 客户端断开有清理，无僵尸线程
-4. 事件/速度环均有上限，长时间运行无内存膨胀
-5. OperationMode 补丁与任务 1 给定 diff 一致，未改动 adapter 翻译层
-6. 离线判定窗口为 6 秒（心跳 2s x 3 容忍）
-7. 任务 5 剧本 a/b/c/d 可复现（审核时会重跑）
-8. authority 的 status 操作确为只读（不改变状态、不下发信封）
-9. README、根进度、commit 信息风格与既有仓库一致
-10. 无对既有安全逻辑（仲裁器/网关/权限服务）的行为改动
+1. 前端无 CDN/外链运行时；依赖在白名单内；build 产物被 Go embed
+2. Go：vet/build 通过；无 Web 框架；MQTT 用 paho.mqtt.golang + mTLS
+3. WS/HTTP 并发安全；客户端断开清理 goroutine；无 goroutine 泄漏
+4. SQL 全参数化；迁移幂等；遥测抽稀与保留策略明确
+5. 离线判定 6s；事件/历史环有上限
+6. OperationMode 补丁与任务 1 一致；未动仲裁器/网关安全逻辑
+7. 地图五项（2D/3D、缩放旋转、自定义点云、多车高亮、图例）逐项可复现
+8. 剧本 a-e 全过；nginx 限流与安全头生效
+9. authority status 只读；README/进度/commit 风格一致
 
-## 5. 常见坑速查
+## 5. 坑速查
 
-- paho 回调签名：on_connect(client, userdata, flags, reason_code,
-  properties=None)，少一个参数会静默不回调
-- retained 消息：fleet_hub 一连上就会收到上一次的 register，属正常
-- SSE 输出格式：每条消息以空行结束；Content-Type: text/event-stream；
-  加 Cache-Control: no-cache；Connection 保持
-- ThreadingHTTPServer 下每个 SSE 客户端占一个线程，客户端列表务必
-  在断开/异常路径里移除
-- canvas 曲线归一化：max(5, max(data))，避免全零时除零/贴边
-- 时间基准：倒计时用服务端 server_time_ns，不用浏览器 Date
-- vehicle_side 的 OperationMode 覆盖要在 make_envelope 之前做，
-  别改 common.py/adapter.py
+- paho.mqtt.golang：opts.SetOrderMatters(false) + AutoReconnect；
+  TLS 用 tls.Config 载三张证书；ClientID 唯一
+- go:embed 前端产物：//go:embed all:web/dist；SPA 回退 index.html
+- vite dev 代理 ws 要写 ws: true
+- three 点云：PointsMaterial sizeAttenuation 在 2D 正交下关掉；
+  大数据量用 Float32BufferAttribute 一次上传
+- xterm 需调 fit addon，容器尺寸变化要 refit
+- React WS 重连：指数退避 + 重连后先拉 /api/fleet 全量对齐
+- 时间基准：倒计时用 server_time_ns，不用浏览器墙钟
 
-## 6. MQTT 调试订阅脚本（自测用，勿提交）
+## 6. 迁移表（本期之后，Go 重写顺序）
 
-~~~
-export DYLD_LIBRARY_PATH=/opt/homebrew/opt/expat/lib
-cd Robot-agent
-.venv/bin/python - <<'PY'
-import paho.mqtt.client as mqtt
-def on_msg(c, u, msg):
-    print(msg.topic, msg.payload[:160])
-cli = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="dbg-sub", protocol=mqtt.MQTTv5)
-cli.tls_set(ca_certs="deploy/pki/dev/ca.crt", certfile="deploy/pki/dev/access.crt", keyfile="deploy/pki/dev/access.key")
-cli.on_message = on_msg
-cli.connect("localhost", 8883)
-cli.subscribe("vehicle/#", qos=1)
-cli.loop_forever()
-PY
-~~~
+| 现 Python 原型 | Go 目标 | 阶段 |
+|---|---|---|
+| fleet_hub（本期直接 Go 新建） | server/fleet | 本期 |
+| authority_service | server/control-authority | 二期 |
+| access_service | server/vehicle-access | 二期 |
+| control_relay | server/control-relay | 三期 |
+| 车端各 agent | 保持 Python/或 C++，车端不强制 Go | 不定 |
 
