@@ -74,6 +74,18 @@ class Authority:
               f"有效期 {self.terminal_seconds:.0f}s")
         return {"ok": True, "token": token, "valid_until_unix_ns": until}
 
+    def status(self):
+        """只读查询当前接管状态（大屏轮询用，第 10 步）。
+
+        不改变任何状态、不下发任何信封。
+        """
+        if self.current and self.current[2] > time.time_ns():
+            d, lid, until = self.current
+            return {"ok": True, "active": True, "driver": d,
+                    "lease_id": lid, "fencing": self.fencing,
+                    "valid_until_unix_ns": until}
+        return {"ok": True, "active": False}
+
     def _push_grant(self, driver, lease_id, fencing, until_ns):
         payload = {"driver_id": driver, "lease_id": lease_id,
                    "fencing_token": fencing, "valid_until_unix_ns": until_ns}
@@ -114,6 +126,8 @@ def main():
             resp = auth.release(driver)
         elif op == "terminal":
             resp = auth.terminal(driver)
+        elif op == "status":
+            resp = auth.status()
         else:
             resp = {"ok": False, "error": f"未知操作 {op}"}
         sock.sendto(json.dumps(resp).encode("utf-8"), addr)

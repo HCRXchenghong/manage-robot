@@ -16,6 +16,9 @@ __pycache__/
 # 日志
 *.log
 
+# Go 编译产物
+server/fleet/fleet-hub
+
 # Python 虚拟环境
 .venv/
 __pycache__/

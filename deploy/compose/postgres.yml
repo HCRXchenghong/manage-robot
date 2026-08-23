@@ -1,0 +1,24 @@
+# PostgreSQL —— 第 10 步运营大屏（业务真相源）
+# 启动：cd deploy/compose && docker compose -f postgres.yml up -d
+# 宿主机端口 5433（避开本机 5432）；fleet-hub 默认 DSN 指向这里。
+# migrations 挂载进 initdb（仅首次初始化）；hub 启动时也会幂等迁移（双保险）。
+services:
+  postgres:
+    image: postgres:16
+    container_name: ra-pg
+    environment:
+      POSTGRES_USER: robot
+      POSTGRES_PASSWORD: robot
+      POSTGRES_DB: robot
+    ports:
+      - "5433:5432"
+    volumes:
+      - ra-pg-data:/var/lib/postgresql/data
+      - ../../server/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U robot -d robot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  ra-pg-data:

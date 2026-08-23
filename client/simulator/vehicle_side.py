@@ -114,6 +114,11 @@ class VehicleSide:
             bat = {"capacity": 85.0, "voltage": 52.3}
             signals = adapter.translate_vehicle_status(vs, ts) + \
                 adapter.translate_battery(bat, ts)
+            # 第 10 步：让大屏看到仲裁器真实状态
+            # （arb.mode ∈ autonomous/remote_control/minimum_risk/stopped）
+            for s in signals:
+                if s["path"] == "Platform.Autonomy.OperationMode":
+                    s["value"] = {"text": self.arb.mode}
             self.seq += 1
             env = C.make_envelope("platform.v1.SignalUpdate",
                                   {"signals": signals}, "sim-session",
