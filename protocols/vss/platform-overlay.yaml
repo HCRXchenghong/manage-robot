@@ -1,0 +1,84 @@
+# 平台 VSS Overlay（草案 v0.1）
+# 基于 COVESA VSS 6.0，定义本项目使用的 Platform.* 扩展信号。
+# 架构文档 §6.2 要求每个信号声明：数据类型、单位/坐标系、更新频率、
+# 数据来源、是否可写、安全等级、缺失值含义、各栈映射。
+# 映射列的具体 topic/channel 由 vehicle/adapters/ 各适配器维护。
+
+version: "0.1"
+based_on_vss: "6.0"
+
+signals:
+  Platform.Autonomy.StackType:
+    datatype: string           # autoware_ros2 | generic_ros2 | ros1 | apollo_cyber
+    update: on_change
+    source: vehicle/adapters
+    writable: false
+    safety: informational
+    missing: 车辆未接入或 Adapter 未启动
+
+  Platform.Autonomy.OperationMode:
+    datatype: string           # autonomous | remote | manual | fault
+    update: on_change
+    source: vehicle/adapters
+    writable: false
+    safety: safety_relevant
+    missing: 按 fault 处理，禁止进入远程接管
+
+  Platform.Autonomy.Localization.Quality:
+    datatype: float            # 0..1
+    unit: ratio
+    update: 10Hz
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: safety_relevant
+    missing: 视为 0，触发最小风险评估
+
+  Platform.Autonomy.Planning.State:
+    datatype: string           # idle | planning | executing | fault
+    update: on_change
+    source: vehicle/adapters
+    writable: false
+    safety: informational
+    missing: 视为 idle
+
+  Platform.Autonomy.Control.State:
+    datatype: string           # ready | active | fault
+    update: on_change
+    source: vehicle/adapters
+    writable: false
+    safety: safety_relevant
+    missing: 视为 fault
+
+  Platform.RemoteDriving.Lease.State:
+    datatype: string           # none | pending | granted | expired
+    update: on_change
+    source: server/control-authority + vehicle/safety-arbiter
+    writable: false
+    safety: safety_relevant
+    missing: 视为 none
+
+  Platform.RemoteDriving.SafeStop.State:
+    datatype: string           # idle | engaged | fault
+    update: on_change
+    source: vehicle/safety-arbiter
+    writable: false
+    safety: safety_relevant
+    missing: 视为 fault，立即最小风险策略
+
+  Platform.Network.LinkA.RttP95:
+    datatype: uint32
+    unit: ms
+    update: 1Hz
+    source: vehicle/gateway（链路 A 测量）
+    writable: false
+    safety: informational
+    missing: 视为链路不可用
+
+  Platform.Network.LinkB.PacketLoss:
+    datatype: float            # 0..1
+    unit: ratio
+    update: 1Hz
+    source: vehicle/gateway（链路 B 测量）
+    writable: false
+    safety: informational
+    missing: 视为链路不可用

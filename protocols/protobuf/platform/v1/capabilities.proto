@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package platform.v1;
+
+import "platform/v1/control.proto";
+
+// 能力协商（对应架构文档 §6.4）。车辆上线时发送，
+// 服务端只允许与兼容矩阵匹配的车辆进入远程接管状态。
+
+// 自动驾驶系统类型。
+enum AutonomyStack {
+  AUTONOMY_STACK_UNSPECIFIED = 0;
+  AUTONOMY_STACK_AUTOWARE_ROS2 = 1;
+  AUTONOMY_STACK_GENERIC_ROS2 = 2;
+  AUTONOMY_STACK_ROS1 = 3; // 存量 ROS 1 车辆（过渡兼容）
+  AUTONOMY_STACK_APOLLO_CYBER = 4;
+}
+
+// 相机能力。
+message CameraCapability {
+  string camera_id = 1;
+  uint32 width = 2;
+  uint32 height = 3;
+  uint32 fps = 4;
+  string codec = 5; // 如 h264
+  uint32 max_bitrate_kbps = 6;
+}
+
+// Modem/运营商信息（双链路要求两个不同运营商的独立 Modem；
+// 双 SIM 共用一张网卡不构成真正冗余）。
+message ModemInfo {
+  string modem_id = 1;
+  string carrier = 2;
+  string iccid = 3;
+}
+
+// 地图能力。
+message MapCapability {
+  repeated string map_formats = 1; // pcd / lanelet2_osm / apollo_map / opendrive
+  string coordinate_frame = 2;     // 坐标系标识，如 EPSG:xxxx
+}
+
+// Gateway 能力声明。
+message GatewayCapabilities {
+  string vehicle_id = 1;
+  string gateway_version = 2;
+
+  // 自动驾驶系统及版本（含存量 ROS 1 及发行版）。
+  AutonomyStack stack = 3;
+  string stack_version = 4; // 如 "ROS 1 Noetic" / "Autoware v0.x"
+
+  // 支持的控制模式（接管前必须返回当前可用模式）。
+  repeated ControlMode supported_control_modes = 5;
+
+  // ROS 2 Topic / ROS 1 Topic / Cyber Channel 映射版本。
+  string topic_mapping_version = 6;
+
+  repeated CameraCapability cameras = 7;
+  repeated ModemInfo modems = 8;
+
+  // 安全能力。
+  bool tpm_available = 9;
+  bool certificate_installed = 10;
+
+  // 维护能力：vpn / ssh / sovd / uds_doip / gui。
+  repeated string workspace_features = 11;
+
+  MapCapability map = 12;
+  string adapter_version = 13;
+  string safety_arbiter_version = 14;
+}

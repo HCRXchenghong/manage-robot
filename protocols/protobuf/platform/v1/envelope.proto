@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package platform.v1;
+
+// 统一消息信封：所有跨 车辆/云端/客户端 的消息都必须包在 Envelope 里。
+// 对应架构文档 §6.1。
+message Envelope {
+  // 协议主版本：不兼容变更时增加；同一 major 内禁止复用字段编号。
+  uint32 schema_major = 1;
+  uint32 schema_minor = 2;
+
+  // payload 里消息的类型名，如 "platform.v1.SignalUpdate"。
+  string message_type = 3;
+
+  string vehicle_id = 4;
+  string gateway_id = 5;
+  string session_id = 6;
+
+  // 发送端单调递增序号，用于排序和去重。
+  uint64 sequence = 7;
+
+  // UTC 时间仅用于跨系统审计；高频控制排序以单调时钟 + 序号为准。
+  int64 utc_time_ns = 8;
+  uint64 monotonic_time_ns = 9;
+
+  // 生存时间：到期后车端直接拒绝，不补发旧控制值。
+  uint32 ttl_ms = 10;
+
+  // 贯穿 控制端→边缘→云服务→车端 的审计追踪 ID。
+  string trace_id = 11;
+
+  // 具体消息的序列化字节（如 SignalUpdate / ControlCommand）。
+  bytes payload = 12;
+
+  // 完整性/认证标签（端到端）。
+  bytes auth_tag = 13;
+}

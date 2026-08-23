@@ -35,7 +35,7 @@
 ## 当前进度（对照架构文档第 18 节）
 
 - [x] 第 1 步：仓库目录脚手架（本目录）
-- [ ] 第 2 步：protocols/ —— 冻结第一版 Protobuf 消息和 VSS 扩展
+- [x] 第 2 步：protocols/ —— 第一版 Protobuf 消息与 VSS overlay（草案 v0.1，待评审冻结）
 - [ ] 第 3 步：模拟器（模拟 Vehicle Gateway 和控制客户端）
 - [ ] 第 4 步：最小 Adapter（Autoware/ROS 2、Apollo、ROS 1）
 - [ ] 第 5 步：mTLS 注册、MQTT 遥测、双 QUIC 控制、单路 WebRTC

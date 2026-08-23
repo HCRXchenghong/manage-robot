@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package platform.v1;
+
+// 遥测类消息（对应架构文档 §6.2 VSS 信号模型）。
+
+message DoubleList {
+  repeated double values = 1;
+}
+
+// 信号值：VSS 风格的通用取值。
+message Value {
+  oneof kind {
+    double number = 1;
+    bool boolean = 2;
+    string text = 3;
+    bytes raw = 4;
+    DoubleList number_list = 5;
+  }
+}
+
+// 信号质量。
+enum SignalQuality {
+  SIGNAL_QUALITY_UNSPECIFIED = 0;
+  SIGNAL_QUALITY_GOOD = 1;
+  SIGNAL_QUALITY_STALE = 2;    // 数据过期但仍可用
+  SIGNAL_QUALITY_MISSING = 3;  // 源缺失
+  SIGNAL_QUALITY_INVALID = 4;  // 校验失败
+}
+
+// 单条信号：path 使用 VSS 路径（Vehicle.Speed / Platform.Autonomy.* 等）。
+message Signal {
+  string path = 1;
+  Value value = 2;
+  uint64 sample_monotonic_ns = 3;
+  int64 sample_utc_ns = 4;
+  SignalQuality quality = 5;
+}
+
+// 一批信号更新（遥测主消息）。
+message SignalUpdate {
+  repeated Signal signals = 1;
+}
+
+// 单条链路状态（双链路各报一条）。
+message LinkStatus {
+  bool up = 1;
+  string carrier = 2;              // 运营商
+  uint32 rtt_ms = 3;
+  double packet_loss_fraction = 4; // 0..1
+  uint64 tx_bytes_per_s = 5;
+}
+
+// Gateway 自身状态（低频上报）。
+message GatewayStatus {
+  uint64 uptime_s = 1;
+  LinkStatus link_a = 2;
+  LinkStatus link_b = 3;
+  string adapter_version = 4;
+  string safety_arbiter_version = 5;
+}
+
+// 心跳（保活用，无内容）。
+message Heartbeat {}

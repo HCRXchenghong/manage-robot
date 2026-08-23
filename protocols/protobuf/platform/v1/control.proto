@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package platform.v1;
+
+// 控制类消息（对应架构文档 §6.3）。
+// 核心原则：车端安全仲裁器最终裁决；过期/越权/超界命令一律拒绝。
+
+// 控制模式。
+enum ControlMode {
+  CONTROL_MODE_UNSPECIFIED = 0;
+  CONTROL_MODE_DIRECT_ACTUATION = 1; // 直接执行器：转向/油门/制动/挡位（限定低速区域）
+  CONTROL_MODE_TARGET_MOTION = 2;    // 目标运动：速度/加速度/曲率/横摆率（车端本地闭环优先）
+  CONTROL_MODE_TRAJECTORY = 3;       // 轨迹：带时间戳轨迹点（远程辅助优先）
+  CONTROL_MODE_MINIMAL_RISK = 4;     // 最小风险：车端执行安全停车等策略
+}
+
+// 挡位。
+enum Gear {
+  GEAR_UNSPECIFIED = 0;
+  GEAR_PARK = 1;
+  GEAR_REVERSE = 2;
+  GEAR_NEUTRAL = 3;
+  GEAR_DRIVE = 4;
+}
+
+// 直接执行器指令。单位一律 SI；油门/制动为 0..1 比例，
+// 由车端 Adapter 按车辆能力清单和标定文件转换，云端不做假设。
+message DirectActuation {
+  double steering_angle_target_rad = 1; // 目标方向盘转角（弧度）
+  double throttle_fraction = 2;         // 0..1
+  double brake_fraction = 3;            // 0..1
+  Gear gear = 4;
+}
+
+// 目标运动指令。
+message TargetMotion {
+  double target_speed_mps = 1;          // m/s
+  double target_acceleration_mps2 = 2;  // m/s^2
+  double target_curvature_inv_m = 3;    // 1/m
+  double target_yaw_rate_radps = 4;     // rad/s
+}
+
+// 轨迹点。
+message TrajectoryPoint {
+  double x_m = 1;
+  double y_m = 2;
+  double heading_rad = 3;
+  double speed_mps = 4;
+  double time_offset_s = 5; // 相对命令下发时刻
+}
+
+// 轨迹指令。
+message Trajectory {
+  repeated TrajectoryPoint points = 1;
+}
+
+// 最小风险触发原因。
+enum MinimalRiskReason {
+  MINIMAL_RISK_REASON_UNSPECIFIED = 0;
+  MINIMAL_RISK_REASON_LINK_LOSS = 1;     // 双链路均丢失
+  MINIMAL_RISK_REASON_LEASE_EXPIRED = 2; // 控制权租约到期
+  MINIMAL_RISK_REASON_DRIVER_REQUEST = 3;
+  MINIMAL_RISK_REASON_SYSTEM_FAULT = 4;
+}
+
+// 最小风险指令：车端按本地策略执行（如安全停车）。
+message MinimalRiskCommand {
+  MinimalRiskReason reason = 1;
+}
+
+// 控制命令（双链路双发；车端按 fencing token + 序号 + TTL 校验去重）。
+message ControlCommand {
+  string control_session_id = 1;
+  string lease_id = 2;
+  uint64 fencing_token = 3;
+  uint64 command_sequence = 4;
+  uint64 issued_monotonic_ns = 5;
+  uint32 ttl_ms = 6; // 到期即弃，不执行旧命令
+  ControlMode mode = 7;
+
+  oneof command {
+    DirectActuation direct = 10;
+    TargetMotion motion = 11;
+    Trajectory trajectory = 12;
+    MinimalRiskCommand minimal_risk = 13;
+  }
+
+  // 端到端完整性校验。
+  bytes end_to_end_mac = 20;
+}
+
+// 车端校验/执行结果。
+enum ControlResult {
+  CONTROL_RESULT_UNSPECIFIED = 0;
+  CONTROL_RESULT_ACCEPTED = 1;
+  CONTROL_RESULT_REJECTED_STALE = 2;   // 过期（TTL/序号落后）
+  CONTROL_RESULT_REJECTED_FENCING = 3; // fencing token 无效
+  CONTROL_RESULT_REJECTED_LEASE = 4;   // 租约无效
+  CONTROL_RESULT_REJECTED_LIMIT = 5;   // 超出安全限幅
+  CONTROL_RESULT_FAILED = 6;           // 执行失败
+}
+
+// 控制回执（审计与闭环测量用）。
+message ControlAck {
+  string control_session_id = 1;
+  uint64 command_sequence = 2;
+  ControlResult result = 3;
+  string detail = 4;
+  uint64 applied_monotonic_ns = 5; // 实际执行时刻，用于测量输入→执行延迟
+}
