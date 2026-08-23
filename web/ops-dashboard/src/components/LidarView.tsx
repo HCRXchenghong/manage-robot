@@ -4,6 +4,7 @@
 //    （绿=行驶、黄=空闲、灰=离线、红=告警）；静态基础设施为暗蓝
 //  - 数据源可配置：默认 /api/pointcloud；「配置点云」可本地加载
 //    JSON/CSV（每行 x,y,z[,intensity]），替换静态场景、保留车辆
+//    加载自定义地图后相机自动取景（包围盒居中），静态点按高度渐变着色
 //  - THREE.Points + BufferGeometry；超过 10 万点自动降采样
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -33,20 +34,45 @@ const MAX_POINTS = 100000;
 const SCENE_CENTER = new THREE.Vector3(120, 0, 90);
 
 // 点云数据 (x, y 地面, z 高度) -> three.js (x, z->y 高度, y->z)
-function buildGeometry(positions: number[], rgb: [number, number, number]): THREE.BufferGeometry {
+function buildGeometry(
+  positions: number[],
+  rgb: [number, number, number],
+  colored: boolean,
+): THREE.BufferGeometry {
   const n = Math.floor(positions.length / 3);
   const stride = n > MAX_POINTS ? Math.ceil(n / MAX_POINTS) : 1;
   const count = Math.floor(n / stride);
   const pos = new Float32Array(count * 3);
   const col = new Float32Array(count * 3);
+  let zmin = Infinity;
+  let zmax = -Infinity;
+  if (colored) {
+    for (let i = 0; i < n; i++) {
+      const h = positions[i * 3 + 2];
+      if (h < zmin) zmin = h;
+      if (h > zmax) zmax = h;
+    }
+    if (!Number.isFinite(zmin)) {
+      zmin = 0;
+      zmax = 1;
+    }
+  }
   let j = 0;
   for (let i = 0; i < n; i += stride) {
     pos[j * 3] = positions[i * 3];
     pos[j * 3 + 1] = positions[i * 3 + 2];
     pos[j * 3 + 2] = positions[i * 3 + 1];
-    col[j * 3] = rgb[0];
-    col[j * 3 + 1] = rgb[1];
-    col[j * 3 + 2] = rgb[2];
+    if (colored) {
+      const span = Math.max(1e-6, zmax - zmin);
+      const t = Math.min(1, Math.max(0, (positions[i * 3 + 2] - zmin) / span));
+      col[j * 3] = 0.05 + 0.4 * t;
+      col[j * 3 + 1] = 0.16 + 0.6 * t;
+      col[j * 3 + 2] = 0.35 + 0.6 * t;
+    } else {
+      col[j * 3] = rgb[0];
+      col[j * 3 + 1] = rgb[1];
+      col[j * 3 + 2] = rgb[2];
+    }
     j++;
   }
   const g = new THREE.BufferGeometry();
@@ -57,30 +83,42 @@ function buildGeometry(positions: number[], rgb: [number, number, number]): THRE
 
 // 命令式创建相机并 set({camera})，避免内置相机元素的 makeDefault 类型问题；
 // 2D 用正交俯视，3D 用透视轨道。
-function Rig({ mode, follow }: { mode: ViewMode; follow: THREE.Vector3 | null }) {
+function Rig({
+  mode,
+  follow,
+  center,
+  radius,
+}: {
+  mode: ViewMode;
+  follow: THREE.Vector3 | null;
+  center: THREE.Vector3;
+  radius: number;
+}) {
   const { gl, set, size } = useThree();
   const ref = useRef<OrbitControls | null>(null);
 
   useEffect(() => {
     let cam: THREE.PerspectiveCamera | THREE.OrthographicCamera;
     if (mode === "3d") {
-      const p = new THREE.PerspectiveCamera(50, size.width / Math.max(1, size.height), 1, 4000);
+      const p = new THREE.PerspectiveCamera(50, size.width / Math.max(1, size.height), 0.1, 8000);
       p.up.set(0, 1, 0);
-      p.position.set(320, 260, 320);
+      p.position.set(center.x + radius * 0.95, center.y + radius * 1.15, center.z + radius * 0.95);
       cam = p;
     } else {
       const aspect = size.width / Math.max(1, size.height);
-      const d = 135;
-      const o = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 4000);
+      const d = Math.max(12, radius * 1.1);
+      const o = new THREE.OrthographicCamera(-d * aspect, d * aspect, d, -d, 1, 8000);
       o.up.set(0, 0, -1);
-      o.position.set(SCENE_CENTER.x, 460, SCENE_CENTER.z);
+      o.position.set(center.x, center.y + radius * 3 + 60, center.z);
       o.zoom = 1;
       cam = o;
     }
     const c = new OrbitControls(cam, gl.domElement);
     c.enableDamping = true;
     c.dampingFactor = 0.12;
-    c.target.copy(SCENE_CENTER);
+    c.target.copy(center);
+    c.minDistance = 1;
+    c.maxDistance = radius * 12;
     if (mode === "2d") {
       c.enableRotate = false;
       c.screenSpacePanning = true;
@@ -93,7 +131,7 @@ function Rig({ mode, follow }: { mode: ViewMode; follow: THREE.Vector3 | null })
       ref.current = null;
       c.dispose();
     };
-  }, [mode, gl, set, size.width, size.height]);
+  }, [mode, gl, set, size.width, size.height, center, radius]);
 
   useEffect(() => {
     if (follow && ref.current) ref.current.target.copy(follow);
@@ -159,8 +197,35 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
   const staticGeo = useMemo(() => {
     const src = customStatic ? customStatic.positions : cloud ? cloud.static.positions : null;
     if (!src || src.length < 3) return null;
-    return buildGeometry(src, STATIC_RGB);
+    return buildGeometry(src, STATIC_RGB, true);
   }, [cloud, customStatic]);
+
+  // 视图取景：自定义地图按其包围盒自动居中取景；否则沿用默认合成场景中心
+  const viewFit = useMemo(() => {
+    const center = SCENE_CENTER.clone();
+    let radius = 150;
+    if (customStatic && customStatic.positions.length >= 3) {
+      const p = customStatic.positions;
+      let x0 = Infinity;
+      let x1 = -Infinity;
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      const n = Math.floor(p.length / 3);
+      for (let i = 0; i < n; i++) {
+        const x = p[i * 3];
+        const y = p[i * 3 + 1];
+        if (x < x0) x0 = x;
+        if (x > x1) x1 = x;
+        if (y < y0) y0 = y;
+        if (y > y1) y1 = y;
+      }
+      if (Number.isFinite(x0)) {
+        center.set((x0 + x1) / 2, 0, (y0 + y1) / 2);
+        radius = Math.max(10, Math.hypot(x1 - x0, y1 - y0) / 2);
+      }
+    }
+    return { center, radius };
+  }, [customStatic]);
 
   const vehicleGeos = useMemo(() => {
     if (!cloud) return [];
@@ -170,7 +235,7 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
       return {
         id: vc.vehicle_id,
         status,
-        geo: buildGeometry(vc.positions, STATUS_RGB[status]),
+        geo: buildGeometry(vc.positions, STATUS_RGB[status], false),
       };
     });
   }, [cloud, snap.vehicles]);
@@ -261,7 +326,13 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
           <color attach="background" args={["#060b16"]} />
           <ambientLight intensity={0.7} />
           <directionalLight position={[200, 300, 100]} intensity={0.8} />
-          <Rig key={mode + ":" + rigKey} mode={mode} follow={followVec} />
+          <Rig
+            key={mode + ":" + rigKey + ":" + viewFit.radius.toFixed(1)}
+            mode={mode}
+            follow={followVec}
+            center={viewFit.center}
+            radius={viewFit.radius}
+          />
           {staticGeo && (
             <points geometry={staticGeo}>
               <pointsMaterial

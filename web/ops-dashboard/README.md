@@ -31,7 +31,17 @@ react / react-dom / three / @react-three/fiber / @xterm/* / vite / typescript。
 3. 点车辆锥体或表格行 -> 高亮该车 + 可勾选视角跟随；
 4. 「配置点云」本地加载 JSON/CSV（每行 x,y,z[,intensity]），
    替换静态场景、保留车辆；可一键恢复默认场景；
+   自定义地图加载后相机按包围盒自动取景，静态点按高度渐变着色；
 5. 超 10 万点自动降采样；THREE.Points + BufferGeometry 一次上传。
+
+## 真实激光雷达地图（PCD）
+
+前端只收 JSON/CSV 文本格式；二进制点云（如 PCD）先用随仓工具转换：
+
+    python3 deploy/demo/pcd_to_csv.py <你的.pcd文件> /tmp/map.csv
+
+再「配置点云」加载生成的 CSV 即可（相机自动取景）。
+效果见 docs/screenshots/real-ndt-map-2d.png / real-ndt-map-3d.png。
 
 ## 控制按钮
 
