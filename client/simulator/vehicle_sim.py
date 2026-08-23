@@ -44,6 +44,7 @@ class Arbiter:
         self.last_seq = {}      # 会话 -> 已接受的最大序号
         self.last_fencing = 0   # 见过的最大 fencing token
         self.valid_lease = "valid-lease"
+        self.lease_until_ns = None    # 租约到期（墙钟 ns）；None = 不过期（阶段 0 默认租约）
         self.mode = "autonomous"
         self.speed = 1.6        # 模拟车速（m/s）
         # ---- 断链最小风险（第 6 步）----
@@ -53,8 +54,10 @@ class Arbiter:
 
     def check(self, cmd):
         """返回 (ControlResult, 详情)。顺序：租约 → fencing → TTL → 序号 → 限幅。"""
-        if cmd.get("lease_id") != self.valid_lease:
+        if self.valid_lease is None or cmd.get("lease_id") != self.valid_lease:
             return "CONTROL_RESULT_REJECTED_LEASE", "租约无效"
+        if self.lease_until_ns is not None and time.time_ns() > self.lease_until_ns:
+            return "CONTROL_RESULT_REJECTED_LEASE", "租约已过期"
 
         tok = int(cmd.get("fencing_token", 0))
         if tok < self.last_fencing:
@@ -91,6 +94,26 @@ class Arbiter:
         self.last_accepted_ns = C.mono_ns()
         detail = "ok（链路恢复，重新接管）" if resumed else "ok"
         return "CONTROL_RESULT_ACCEPTED", detail
+
+    def grant_lease(self, lease_id, fencing, valid_until_unix_ns):
+        """云端控制权服务下发/回收租约（第 8 步）。
+
+        空 lease_id 或已过期的到期时间 = 撤销控制权。
+        fencing 全局单调递增：新租约的 token 一定大于旧租约，
+        旧客户端即使拿着旧租约重放，也会被挡下。
+        """
+        tok = int(fencing)
+        self.last_fencing = max(self.last_fencing, tok)
+        if lease_id:
+            self.valid_lease = lease_id
+            self.lease_until_ns = int(valid_until_unix_ns)
+            left = (self.lease_until_ns - time.time_ns()) / 1e9
+            print(f"[仲裁器] 收到租约 lease={lease_id} fencing={tok} "
+                  f"有效期 {left:.1f}s")
+        else:
+            self.valid_lease = None
+            self.lease_until_ns = None
+            print(f"[仲裁器] 控制租约已撤销（fencing={tok}）")
 
     def tick(self):
         """主循环周期性调用：推进断链看门狗与最小风险减速。"""

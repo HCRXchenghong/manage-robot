@@ -60,3 +60,10 @@
 预期：阶段 A 逐条 ✓；阶段 B 约 0.8s 后出现"⚠ 判定链路中断 → 自主减速
 停车"，随后"✓ 车辆已安全停稳"；阶段 C 首条命令"✓ 执行（链路恢复，
 重新接管）"。
+## 接管生命周期（第 8 步：控制权服务 + 租约 + fencing）
+
+- `takeover_demo.py`：两个驾驶员抢控制权——A 申请行驶 → B 顶替（fencing
+  更大）→ A 被拒 → B 租约到期也被拒 → 车端看门狗 → 安全停车。
+- 配套 `server/control-authority/authority_service.py`（发证机关）。
+- 语义：fencing 由权限服务按接管纪元发放、一个租约一个值；命令序号
+  `command_sequence` 负责去重/排序。

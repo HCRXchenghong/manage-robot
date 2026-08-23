@@ -64,9 +64,11 @@ class VehicleSide:
                     rec = json.loads(line.decode("utf-8"))
                 except (ValueError, UnicodeDecodeError):
                     continue
-                if rec.get("kind") != "control":
-                    continue
-                self.handle_control(rec.get("env", {}))
+                kind = rec.get("kind")
+                if kind == "control":
+                    self.handle_control(rec.get("env", {}))
+                elif kind == "lease":
+                    self.handle_lease(rec.get("env", {}))
 
     def handle_control(self, env):
         cmd = env.get("payload", {})
@@ -90,6 +92,13 @@ class VehicleSide:
             "applied_monotonic_ns": C.mono_ns() if accepted else 0,
         }, env.get("session_id", ""), sequence=0)
         self.send_env(ack)
+
+    def handle_lease(self, env):
+        """控制权服务的租约下发/回收（第 8 步）。"""
+        p = env.get("payload", {})
+        self.arb.grant_lease(p.get("lease_id", ""),
+                             int(p.get("fencing_token", 0)),
+                             int(p.get("valid_until_unix_ns", 0)))
 
     # ---------- 上行：假总线 -> 翻译 -> 遥测 ----------
 

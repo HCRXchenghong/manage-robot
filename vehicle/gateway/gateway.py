@@ -151,7 +151,15 @@ class Gateway:
                 env = json.loads(data.decode("utf-8"))
             except (ValueError, UnicodeDecodeError):
                 continue
-            if env.get("message_type") != "platform.v1.ControlCommand":
+            mtype = env.get("message_type")
+            if mtype == "platform.v1.LeaseGrant":
+                # 控制权服务的租约下发：直接转发车端组件（不走过期预筛）
+                n = self._forward_to_components({"kind": "lease", "env": env})
+                p = env.get("payload", {})
+                print(f"[gateway] 租约下发 lease={p.get('lease_id')} "
+                      f"fencing={p.get('fencing_token')} -> {n} 个组件")
+                continue
+            if mtype != "platform.v1.ControlCommand":
                 continue
 
             # 第一道预筛：信封级过期判断（完整裁决仍在车端仲裁器）
