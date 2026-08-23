@@ -15,3 +15,7 @@ __pycache__/
 
 # 日志
 *.log
+
+# Python 虚拟环境
+.venv/
+__pycache__/

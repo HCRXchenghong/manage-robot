@@ -39,7 +39,8 @@
 - [x] 第 3 步：模拟器（假车 + 控制客户端 + 弱网注入，Python 首版，7 场景验证通过）
 - [x] 第 4 步：最小 Adapter —— ros1 翻译核心 + 车端 rospy 壳（11 项自检通过）；其余栈随 Gateway 后补
 - [x] 第 5a 步：Vehicle Gateway 骨架（UDS 本地通道 + 心跳 + 控制路由 + 端到端串联）
-- [ ] 第 5b 步：mTLS 注册、MQTT 遥测、双 QUIC 控制、单路 WebRTC
+- [x] 第 5b 步：mTLS 注册 + MQTT 遥测（开发 CA + mosquitto + paho，端到端验证）
+- [ ] 第 5c 步：双 QUIC 控制、单路 WebRTC
 
 ## 基本原则（摘自架构文档）
 

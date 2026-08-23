@@ -60,6 +60,7 @@ class Gateway:
         self.returns = {}          # (session, seq) -> 控制端地址（回执路由）
         self.lock = threading.Lock()
         self.stats = {"uplink": 0, "down": 0, "ack": 0, "prefilter": 0}
+        self.uplink = None  # MQTTUplink；为 None 时退回 UDP 演示通道
 
     # ---------- UDS：车端组件接入 ----------
 
@@ -119,11 +120,21 @@ class Gateway:
                     self.stats["ack"] += 1
                 else:
                     # 遥测/心跳等：转发上行到云端
-                    try:
-                        self.udp.sendto(json.dumps(env).encode("utf-8"), self.cloud_addr)
-                    except OSError:
-                        pass
+                    self._uplink_env(env)
                     self.stats["uplink"] += 1
+
+    def _uplink_env(self, env):
+        """上行一个信封：优先 MQTT（真实通道），否则 UDP 演示通道。"""
+        if self.uplink is not None:
+            try:
+                self.uplink.send(env)
+            except Exception:
+                pass
+            return
+        try:
+            self.udp.sendto(json.dumps(env).encode("utf-8"), self.cloud_addr)
+        except OSError:
+            pass
 
     # ---------- UDP：控制命令下行 ----------
 
@@ -186,28 +197,84 @@ class Gateway:
             seq += 1
             env = make_envelope("platform.v1.Heartbeat", {}, "gw-session",
                                 sequence=seq, ttl_ms=10000)
-            try:
-                self.udp.sendto(json.dumps(env).encode("utf-8"), self.cloud_addr)
-            except OSError:
-                pass
+            self._uplink_env(env)
             if seq % 10 == 1:
                 s = self.stats
                 print(f"[gateway] 心跳 #{seq} | 上行 {s['uplink']} 下行 {s['down']} "
                       f"回执 {s['ack']} 预筛 {s['prefilter']}")
 
 
+class MQTTUplink:
+    """经 MQTT 5 / mTLS 上行（第 5b 步）。话题规划：
+        vehicle/{id}/register    启动时的注册与能力声明
+        vehicle/{id}/telemetry   遥测 SignalUpdate
+        vehicle/{id}/status      心跳 / Gateway 状态
+    身份来自客户端证书（Broker 侧 use_identity_as_username）。
+    """
+
+    def __init__(self, host, port, ca, cert, key, vehicle_id):
+        import paho.mqtt.client as mqtt  # 延迟导入：UDP 模式不依赖
+        self.vehicle_id = vehicle_id
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                  client_id=f"gw-{vehicle_id}",
+                                  protocol=mqtt.MQTTv5)
+        self.client.tls_set(ca_certs=ca, certfile=cert, keyfile=key)
+        self.client.connect(host, port, keepalive=15)
+        self.client.loop_start()
+
+    def send(self, env):
+        mtype = env.get("message_type", "")
+        if mtype.endswith("SignalUpdate"):
+            kind = "telemetry"
+        elif mtype.endswith("Heartbeat") or mtype.endswith("GatewayStatus"):
+            kind = "status"
+        else:
+            kind = "misc"
+        topic = f"vehicle/{self.vehicle_id}/{kind}"
+        self.client.publish(topic, json.dumps(env), qos=1)
+
+    def register(self, capabilities_env):
+        topic = f"vehicle/{self.vehicle_id}/register"
+        # retained=True：注册/能力是车辆“当前状态”，晚订阅的云端服务也能拿到
+        self.client.publish(topic, json.dumps(capabilities_env), qos=1, retain=True)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Vehicle Gateway 骨架（本地版）")
+    ap = argparse.ArgumentParser(description="Vehicle Gateway（第 5b 步：支持 MQTT 上行）")
     ap.add_argument("--uds", default="/tmp/ra-gw.sock")
     ap.add_argument("--control", type=int, default=9100)
     ap.add_argument("--cloud", default="127.0.0.1:9200")
     ap.add_argument("--heartbeat-hz", type=float, default=0.5)
+    ap.add_argument("--uplink", choices=["udp", "mqtt"], default="udp",
+                    help="udp=本地演示通道；mqtt=mTLS 真实通道（第 5b 步）")
+    ap.add_argument("--mqtt-host", default="localhost")
+    ap.add_argument("--mqtt-port", type=int, default=8883)
+    ap.add_argument("--ca", default="deploy/pki/dev/ca.crt")
+    ap.add_argument("--cert", default="deploy/pki/dev/vehicle.crt")
+    ap.add_argument("--key", default="deploy/pki/dev/vehicle.key")
+    ap.add_argument("--vehicle-id", default="sim-veh-001")
     args = ap.parse_args()
 
     gw = Gateway(args)
+    if args.uplink == "mqtt":
+        gw.uplink = MQTTUplink(args.mqtt_host, args.mqtt_port,
+                               args.ca, args.cert, args.key, args.vehicle_id)
+        caps = make_envelope("platform.v1.GatewayCapabilities", {
+            "vehicle_id": args.vehicle_id,
+            "gateway_version": "0.1.0-sim",
+            "stack": "AUTONOMY_STACK_ROS1",
+            "stack_version": "ROS 1 Noetic",
+            "supported_control_modes": ["CONTROL_MODE_TARGET_MOTION"],
+            "topic_mapping_version": "ros1-map-v0.1",
+            "modems": [{"modem_id": "sim-a", "carrier": "carrier-A"},
+                       {"modem_id": "sim-b", "carrier": "carrier-B"}],
+            "certificate_installed": True,
+        }, "gw-session", sequence=0, ttl_ms=0)
+        gw.uplink.register(caps)
+        print(f"[gateway] mTLS 注册已发送 -> mqtt://{args.mqtt_host}:{args.mqtt_port}")
     gw.start_uds()
     threading.Thread(target=gw.heartbeat_loop, daemon=True).start()
-    print(f"[gateway] 控制入口 :{args.control}，云端 -> {args.cloud}")
+    print(f"[gateway] 控制入口 :{args.control}，上行通道={args.uplink}")
     gw.control_loop()
 
 
