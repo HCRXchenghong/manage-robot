@@ -37,7 +37,7 @@
 - [x] 第 1 步：仓库目录脚手架（本目录）
 - [x] 第 2 步：protocols/ —— 第一版 Protobuf 消息与 VSS overlay（草案 v0.1，待评审冻结）
 - [x] 第 3 步：模拟器（假车 + 控制客户端 + 弱网注入，Python 首版，7 场景验证通过）
-- [ ] 第 4 步：最小 Adapter（Autoware/ROS 2、Apollo、ROS 1）
+- [x] 第 4 步：最小 Adapter —— ros1 翻译核心 + 车端 rospy 壳（11 项自检通过）；其余栈随 Gateway 后补
 - [ ] 第 5 步：mTLS 注册、MQTT 遥测、双 QUIC 控制、单路 WebRTC
 
 ## 基本原则（摘自架构文档）
