@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,5 +133,78 @@ func (h *Hub) remove(c *wsClient) {
 	if _, ok := h.clients[c]; ok {
 		delete(h.clients, c)
 		close(c.send)
+	}
+}
+
+// ServeWSTerminal 阶段 1 模拟终端：hub 代理回显（阶段 2 接 workspace-agent 真 PTY）。
+// 协议：客户端发 {"type":"input","data":"..."}，服务端回 {"type":"output","data":"..."}。
+func ServeWSTerminal(w http.ResponseWriter, r *http.Request) {
+	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("终端 WS 升级失败: %v", err)
+		return
+	}
+	defer conn.Close()
+	vid := r.URL.Query().Get("vehicle_id")
+	if vid == "" {
+		vid = "sim-veh-001"
+	}
+	out := func(s string) {
+		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
+		_ = conn.WriteJSON(map[string]string{"type": "output", "data": s})
+	}
+	out("燃石创想 车端远程终端（阶段 1 模拟回显）\r\n")
+	out("已连接车辆 " + vid + "；生产环境将接入 workspace-agent 的真实 PTY。\r\n")
+	out("输入 help 查看演示命令。\r\n\r\n")
+	prompt := func() { out(vid + ":~$ ") }
+	prompt()
+	var line strings.Builder
+	for {
+		var msg struct {
+			Type string `json:"type"`
+			Data string `json:"data"`
+		}
+		if err := conn.ReadJSON(&msg); err != nil {
+			return
+		}
+		if msg.Type != "input" {
+			continue
+		}
+		for _, ch := range msg.Data {
+			switch ch {
+			case '\r', '\n':
+				out("\r\n")
+				cmd := strings.TrimSpace(line.String())
+				line.Reset()
+				switch cmd {
+				case "":
+				case "help":
+					out("演示命令: help / whoami / mode / uptime / ls / rostopic list\r\n")
+				case "whoami":
+					out("robot\r\n")
+				case "mode":
+					out("autonomous（阶段 1 模拟应答）\r\n")
+				case "uptime":
+					out("up 42 minutes (simulated)\r\n")
+				case "ls":
+					out("catkin_ws/  logs/  config/\r\n")
+				case "rostopic list":
+					out("/vehicle_status  /battery  /ecu_cmd  /diagnostics\r\n")
+				default:
+					out("模拟环境无此命令: " + cmd + "\r\n")
+				}
+				prompt()
+			case 127, 8: // 退格
+				s := line.String()
+				if len(s) > 0 {
+					line.Reset()
+					line.WriteString(s[:len(s)-1])
+					out("\b \b")
+				}
+			default:
+				line.WriteRune(ch)
+				out(string(ch))
+			}
+		}
 	}
 }

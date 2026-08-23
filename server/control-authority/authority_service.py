@@ -86,6 +86,49 @@ class Authority:
                     "valid_until_unix_ns": until}
         return {"ok": True, "active": False}
 
+    def emergency_stop(self):
+        """第 10 步：大屏触发的紧急停车。
+
+        安全链路不变——仍走「发证 -> 车端仲裁器裁决」：
+          1) 以 fencing+1 签发一张 3s 短租约（LeaseGrant 经 Gateway 推车端）；
+          2) 用该租约 + 再递增的 fencing 下发一条零速运动命令；
+          3) 之后故意不再续发命令 -> 车端看门狗 800ms 判定断链 ->
+             最小风险（minimum_risk）-> 自主减速停稳（stopped）。
+        """
+        self.fencing += 1
+        lease_id = f"estop-{uuid.uuid4().hex[:8]}"
+        until = time.time_ns() + int(3e9)
+        self._push_grant("estop", lease_id, self.fencing, until)
+        self.current = ("estop", lease_id, until)
+        time.sleep(0.05)  # 让 LeaseGrant 先到达车端，再发控制命令
+        self.fencing += 1
+        payload = {
+            "control_session_id": "estop-session",
+            "lease_id": lease_id,
+            "fencing_token": self.fencing,
+            "command_sequence": self.fencing,  # 复用全局单调 fencing 保证序号新鲜
+            "issued_monotonic_ns": C.mono_ns(),
+            "ttl_ms": 1500,
+            "mode": "CONTROL_MODE_TARGET_MOTION",
+            "command": {"motion": {"target_speed_mps": 0.0}},
+        }
+        env = C.make_envelope("platform.v1.ControlCommand", payload,
+                              "estop-session", sequence=self.fencing, ttl_ms=1500)
+        ack_result = "NO_ACK"
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(1.0)
+            s.sendto(json.dumps(env).encode("utf-8"), self.gw_addr)
+            try:
+                data, _ = s.recvfrom(65535)
+                ack_result = json.loads(data.decode("utf-8")).get(
+                    "payload", {}).get("result", "?")
+            except (TimeoutError, socket.timeout):
+                pass
+        print(f"[authority] 紧急停车已下发：lease={lease_id} "
+              f"fencing={self.fencing} 回执={ack_result}")
+        return {"ok": ack_result == "CONTROL_RESULT_ACCEPTED",
+                "ack": ack_result, "fencing_token": self.fencing}
+
     def _push_grant(self, driver, lease_id, fencing, until_ns):
         payload = {"driver_id": driver, "lease_id": lease_id,
                    "fencing_token": fencing, "valid_until_unix_ns": until_ns}
@@ -128,6 +171,8 @@ def main():
             resp = auth.terminal(driver)
         elif op == "status":
             resp = auth.status()
+        elif op == "emergency_stop":
+            resp = auth.emergency_stop()
         else:
             resp = {"ok": False, "error": f"未知操作 {op}"}
         sock.sendto(json.dumps(resp).encode("utf-8"), addr)
