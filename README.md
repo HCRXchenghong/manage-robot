@@ -40,7 +40,8 @@
 - [x] 第 4 步：最小 Adapter —— ros1 翻译核心 + 车端 rospy 壳（11 项自检通过）；其余栈随 Gateway 后补
 - [x] 第 5a 步：Vehicle Gateway 骨架（UDS 本地通道 + 心跳 + 控制路由 + 端到端串联）
 - [x] 第 5b 步：mTLS 注册 + MQTT 遥测（开发 CA + mosquitto + paho，端到端验证）
-- [ ] 第 5c 步：双 QUIC 控制、单路 WebRTC
+- [x] 第 5c 步：双 QUIC 控制（控制中继 control-relay + 双链路客户端；三场景验证：双发去重 / 断链存活 / 恢复）
+- [ ] 第 5d 步：单路 WebRTC 视频回传（候选 aiortc）
 
 ## 基本原则（摘自架构文档）
 

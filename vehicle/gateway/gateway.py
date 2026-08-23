@@ -57,7 +57,7 @@ class Gateway:
         self.control_port = args.control
 
         self.components = []       # 已接入的车端组件（UDS 连接）
-        self.returns = {}          # (session, seq) -> 控制端地址（回执路由）
+        self.returns = {}          # (session, seq) -> [控制端地址...]（双链路：每条来路都要回执）
         self.lock = threading.Lock()
         self.stats = {"uplink": 0, "down": 0, "ack": 0, "prefilter": 0}
         self.uplink = None  # MQTTUplink；为 None 时退回 UDP 演示通道
@@ -114,7 +114,8 @@ class Gateway:
                     key = (payload.get("control_session_id"),
                            payload.get("command_sequence"))
                     ret = self.returns.pop(key, None)
-                    if ret:
+                    rets = ret if isinstance(ret, list) else ([ret] if ret else [])
+                    for ret in rets:
                         # 转发内层信封本身，而不是 UDS 记录外壳
                         self.udp.sendto(json.dumps(env).encode("utf-8"), ret)
                     self.stats["ack"] += 1
@@ -173,7 +174,7 @@ class Gateway:
             payload = env.get("payload", {})
             key = (payload.get("control_session_id"),
                    payload.get("command_sequence"))
-            self.returns[key] = addr
+            self.returns.setdefault(key, []).append(addr)
             n = self._forward_to_components({"kind": "control", "env": env})
             self.stats["down"] += 1
             print(f"[gateway] 控制命令下发 seq={payload.get('command_sequence')} -> {n} 个组件")
