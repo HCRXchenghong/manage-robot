@@ -31,3 +31,18 @@ WebRTC** 演示完整视频链路（产帧→编码→RTP→解码→收帧）�
 - 信令服务化：SDP/ICE 经 media-control，接入租约与控制权校验
 - 真实相机接入 + 自适应码率、丢包恢复（NACK/PLI）、弱网演练
 
+## 双路视频冗余 + 合并（第 7 步）
+
+架构文档 §7.4 / 阶段 3："单视频链路断开时，备用健康则视频不重建"。
+
+- `dual_video_receiver.py`：`Merger`（按帧序号合并去重 + 可模拟单路故障）
+  + `DualVideoReceiver`（双 UDP 口监听 + 解码统计）。
+- `dual_video_demo.py`：一个进程里同时跑车端双路发送器与收端合并器，
+  用真实 UDP 回环模拟两条独立路径，分三阶段演示。
+
+    .venv/bin/python server/media-control/dual_video_demo.py
+
+预期：双路正常时去重取一份；B 路中断（丢 B 口包）期间画面由 A 路完整支撑、
+不中断不重建；B 路恢复后继续。实测：60 唯一帧、解码 60 帧、断链期丢 21 包
+仍无缝续播。
+
