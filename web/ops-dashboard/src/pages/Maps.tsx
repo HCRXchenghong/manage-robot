@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FleetState } from "../api";
 import { convertMap, fetchMaps, mapFileURL, uploadMap } from "../api";
+import Modal from "../components/Modal";
 import type { MapEntry } from "../types";
 
 interface Props {
@@ -44,6 +45,7 @@ export default function Maps({ fleet, onEdit }: Props) {
   const [uploadVid, setUploadVid] = useState("sim-veh-001");
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const reload = useCallback(async () => {
@@ -73,6 +75,7 @@ export default function Maps({ fleet, onEdit }: Props) {
     try {
       const r = await uploadMap(uploadVid, f, "manual");
       setMsg(r.changed ? "已导入：" + f.name : "内容未变化，已去重（不产生新版本）");
+      setImportOpen(false);
     } catch (e) {
       setMsg("导入失败：" + String(e));
     }
@@ -103,16 +106,7 @@ export default function Maps({ fleet, onEdit }: Props) {
           </div>
         </div>
         <div className="btn-row">
-          <select className="input" value={uploadVid} onChange={(e) => setUploadVid(e.target.value)}>
-            {fleet.snap.vehicles.map((v) => (
-              <option key={v.vehicle_id} value={v.vehicle_id}>{v.vehicle_id}</option>
-            ))}
-          </select>
-          <input
-            ref={fileRef} type="file" accept=".pcd,.csv,.png,.pgm" style={{ display: "none" }}
-            onChange={(e) => void doUpload(e.target.files ? e.target.files[0] : null)}
-          />
-          <button className="btn" onClick={() => fileRef.current && fileRef.current.click()}>导入地图</button>
+          <button className="btn primary" onClick={() => setImportOpen(true)}>导入地图</button>
           <button className="btn" onClick={() => void reload()}>刷新</button>
         </div>
       </div>
@@ -177,6 +171,26 @@ export default function Maps({ fleet, onEdit }: Props) {
             );
           })}
         </div>
+      )}
+
+      {importOpen && (
+        <Modal title="导入地图" onClose={() => setImportOpen(false)} width="min(480px, 92vw)">
+          <div className="row" style={{ marginBottom: 10 }}>
+            <span className="muted" style={{ width: 60 }}>车辆</span>
+            <select className="input" value={uploadVid} onChange={(e) => setUploadVid(e.target.value)}>
+              {fleet.snap.vehicles.map((v) => (
+                <option key={v.vehicle_id} value={v.vehicle_id}>{v.vehicle_id}</option>
+              ))}
+            </select>
+          </div>
+          <input
+            ref={fileRef} type="file" accept=".pcd,.csv,.png,.pgm"
+            onChange={(e) => void doUpload(e.target.files ? e.target.files[0] : null)}
+          />
+          <div className="muted mt" style={{ fontSize: 11 }}>
+            支持 ROS1/ROS2/Autoware/Apollo 的 .pcd / .csv 点云与 .png / .pgm 栅格；内容相同自动去重。
+          </div>
+        </Modal>
       )}
     </div>
   );
