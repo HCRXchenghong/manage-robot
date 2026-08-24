@@ -368,7 +368,7 @@ export async function fetchUsers(): Promise<UserInfo[]> {
 }
 
 export async function createUser(body: {
-  username: string; display_name: string; password: string; role: string; groups: string[];
+  username: string; display_name: string; password: string; role: string; groups: string[]; phone?: string;
 }): Promise<void> {
   await fetchJSON("/api/admin/users", {
     method: "POST",

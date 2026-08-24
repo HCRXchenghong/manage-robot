@@ -17,7 +17,7 @@ export default function AdminPage({ me }: { me: Me }) {
   const [users, setUsers] = useState<UserInfo[]>([]);
   const [msg, setMsg] = useState("");
   const [newGroup, setNewGroup] = useState("");
-  const [form, setForm] = useState({ username: "", display_name: "", password: "", role: "user", groups: [] as string[] });
+  const [form, setForm] = useState({ username: "", display_name: "", password: "", role: "user", groups: [] as string[], phone: "" });
   const [editing, setEditing] = useState("");
   const [editPwd, setEditPwd] = useState("");
 
@@ -115,6 +115,7 @@ export default function AdminPage({ me }: { me: Me }) {
           <input className="input" style={{ width: 140 }} placeholder="登录用户名" value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
           <input className="input" style={{ width: 140 }} placeholder="姓名" value={form.display_name} onChange={(e) => setForm({ ...form, display_name: e.target.value })} />
           <input className="input" style={{ width: 180 }} type="password" placeholder="初始密码（≥8位含3类字符）" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+          <input className="input" style={{ width: 150 }} placeholder="手机号（选填，用于登录）" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/\D/g, "") })} />
           <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
             {isSuper && <option value="super">超级管理员</option>}
             <option value="group_admin">管理员</option>
