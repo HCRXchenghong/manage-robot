@@ -1,6 +1,6 @@
-// 总览大屏：顶部统计+工具条；中部三栏——左翼（车辆列表/告警与事件）、
-// 中间 2D/3D 地图、右翼（详情/接管/终端）。两翼整列可收起成细竖条，
-// 翼内每张卡片也可单独收起；收起后空间全部让给中间地图。
+// 总览大屏：顶部统计+工具条；下方整块 2D/3D 地图，五张卡片以悬浮层
+// 形式叠在地图内部左右两侧（左：车辆列表/告警与事件；右：详情/接管/终端）。
+// 左右浮层整列可收起成细竖条，翼内卡片也可单独收起；收起后地图完整露出。
 import { useRef, useState } from "react";
 import type { FleetState } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
@@ -50,20 +50,28 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
         </span>
       </div>
       <div className="overview-main">
-        <SideCol id="left" label="车辆列表 / 告警事件">
-          <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
-            <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
-          </CollapsePanel>
-          <EventFeed events={view.events} compact />
-        </SideCol>
         <div className="panel overview-map">
-          <LidarView snap={view} selectedId={selected ? selected.vehicle_id : null} onSelect={(id) => onSelect(id, false)} />
+          <LidarView
+            snap={view}
+            selectedId={selected ? selected.vehicle_id : null}
+            onSelect={(id) => onSelect(id, false)}
+            overlayLeft={
+              <SideCol id="left" label="车辆列表 / 告警事件">
+                <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
+                  <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
+                </CollapsePanel>
+                <EventFeed events={view.events} compact />
+              </SideCol>
+            }
+            overlayRight={
+              <SideCol id="right" label="详情 / 接管 / 终端">
+                <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
+                <TakeoverPanel snap={view} />
+                <TerminalPanel vehicle={selected} />
+              </SideCol>
+            }
+          />
         </div>
-        <SideCol id="right" label="详情 / 接管 / 终端">
-          <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
-          <TakeoverPanel snap={view} />
-          <TerminalPanel vehicle={selected} />
-        </SideCol>
       </div>
     </div>
   );

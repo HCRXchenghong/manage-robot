@@ -9,6 +9,7 @@
 //    可导出 ROS map_server 三件套（PNG + PGM + YAML）
 //  - THREE.Points + BufferGeometry；超过 10 万点自动降采样
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -173,9 +174,12 @@ interface Props {
   snap: FleetSnap;
   selectedId?: string | null;
   onSelect?: (id: string) => void;
+  // 地图内悬浮卡片（总览大屏）：左=车辆列表/告警与事件，右=详情/接管/终端
+  overlayLeft?: ReactNode;
+  overlayRight?: ReactNode;
 }
 
-export default function LidarView({ snap, selectedId, onSelect }: Props) {
+export default function LidarView({ snap, selectedId, onSelect, overlayLeft, overlayRight }: Props) {
   const [mode, setMode] = useState<ViewMode>("3d");
   const [pointSize, setPointSize] = useState(2);
   const [follow, setFollow] = useState(false);
@@ -507,15 +511,26 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
           <div className="legend-row"><span className="legend-chip" style={{ background: "#6b7280" }} />离线</div>
           <div className="legend-row"><span className="legend-chip" style={{ background: "#ef4444" }} />告警（最小风险）</div>
           <div className="legend-row"><span className="legend-chip" style={{ background: "#1e4a7a" }} />静态基础设施</div>
+          {bev && gridOn && (
+            <div className="legend-row">
+              网格 {bev.nx}×{bev.ny} · 占据 {bev.occupiedCells} · 切片 {bev.z0.toFixed(1)}~{bev.z1.toFixed(1)}m
+            </div>
+          )}
         </div>
         <div className="lidar-hint">
           {mode === "3d" ? "拖拽旋转 · 滚轮缩放 · 点击锥体选车" : "拖拽平移 · 滚轮缩放 · 点击锥体选车"}
           {selectedVehicle ? " · 选中 " + selectedVehicle.vehicle_id : ""}
-          {bev && gridOn
-            ? " · 网格 " + bev.nx + "×" + bev.ny + " · 占据 " + bev.occupiedCells + " · 切片 " + bev.z0.toFixed(1) + "~" + bev.z1.toFixed(1) + "m"
-            : ""}
         </div>
-        {error && <div className="lidar-hint" style={{ top: 10, bottom: "auto", color: "#fca5a5" }}>{error}</div>}
+        {error && (
+          <div
+            className="lidar-hint"
+            style={{ top: 10, left: 10, right: "auto", bottom: "auto", transform: "none", color: "#fca5a5", zIndex: 8 }}
+          >
+            {error}
+          </div>
+        )}
+        {overlayLeft && <div className="map-overlay left">{overlayLeft}</div>}
+        {overlayRight && <div className="map-overlay right">{overlayRight}</div>}
       </div>
     </div>
   );

@@ -188,9 +188,9 @@ select.input { appearance: auto; }
 .lidar-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .lidar-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
 .lidar-toolbar .spacer { flex: 1; }
-.lidar-canvas { flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; background: #060b16; border: 1px solid var(--border); }
+.lidar-canvas { position: relative; flex: 1; min-height: 0; border-radius: 8px; overflow: hidden; background: #060b16; border: 1px solid var(--border); }
 .lidar-legend {
-  position: absolute; left: 10px; bottom: 10px;
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
   background: rgba(8, 14, 28, 0.82); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--text-dim);
   pointer-events: none;
@@ -198,10 +198,25 @@ select.input { appearance: auto; }
 .legend-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
 .legend-chip { width: 10px; height: 10px; border-radius: 3px; }
 .lidar-hint {
-  position: absolute; right: 10px; bottom: 10px; font-size: 11px;
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;
   border-radius: 6px; pointer-events: none;
 }
+
+/* 地图内悬浮卡片（总览大屏）：浮在点云画布左右两侧，整列可收起成细竖条 */
+.map-overlay {
+  position: absolute; top: 10px; bottom: 10px; z-index: 6;
+  display: flex; flex-direction: column; max-width: 46%;
+}
+.map-overlay.left { left: 10px; }
+.map-overlay.right { right: 10px; }
+.map-overlay .side-col {
+  width: 300px; flex: 1; min-height: 0;
+  background: rgba(8, 14, 28, 0.86); backdrop-filter: blur(6px);
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px;
+}
+.map-overlay .side-rail { height: 100%; background: rgba(8, 14, 28, 0.85); backdrop-filter: blur(4px); }
+.map-overlay .panel { background: rgba(11, 18, 36, 0.72); }
 
 /* ===== 事件流 ===== */
 .event { display: flex; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #1a2745; align-items: flex-start; }
