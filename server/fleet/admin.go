@@ -34,6 +34,43 @@ func registerAuthRoutes(mux *http.ServeMux, svc *Services) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": note, "preauth": token})
 	})
+	mux.HandleFunc("POST /api/auth/sms/send", func(w http.ResponseWriter, r *http.Request) {
+		body := readJSONBody(w, r)
+		if body == nil {
+			return
+		}
+		phone, _ := body["phone"].(string)
+		code, err := svc.auth.SendSmsCode(phone)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "demo_code": code,
+			"note": "演示环境未接短信网关，验证码直接展示；生产环境经短信下发",
+		})
+	})
+	mux.HandleFunc("POST /api/auth/login-phone", func(w http.ResponseWriter, r *http.Request) {
+		body := readJSONBody(w, r)
+		if body == nil {
+			return
+		}
+		phone, _ := body["phone"].(string)
+		code, _ := body["code"].(string)
+		sess, err := svc.auth.LoginPhone(phone, code, r.RemoteAddr)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name: "ra_session", Value: sess.Token, Path: "/",
+			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true,
+			"me": map[string]any{"username": sess.Username, "role": sess.Role, "groups": sess.Groups},
+		})
+	})
 	// 第二段：人机验证通过才发会话 Cookie。
 	mux.HandleFunc("POST /api/auth/verify", func(w http.ResponseWriter, r *http.Request) {
 		body := readJSONBody(w, r)
@@ -256,6 +293,12 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
+		}
+		if phone, _ := body["phone"].(string); phone != "" {
+			if _, perr := svc.auth.SetPhone(username, phone); perr != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": perr.Error()})
+				return
+			}
 		}
 		if svc.auth.st != nil {
 			svc.auth.st.pushEvent("info", "", "新建账号："+u.Username+"（"+role+"）by "+sess.Username)

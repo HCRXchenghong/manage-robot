@@ -22,7 +22,16 @@ export async function fetchJSON<T>(path: string, init?: RequestInit, timeoutMs =
   const timer = window.setTimeout(() => ctl.abort(), timeoutMs);
   try {
     const r = await fetch(path, { ...init, signal: ctl.signal });
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) {
+      let msg = "HTTP " + r.status;
+      try {
+        const j = (await r.json()) as { error?: string };
+        if (j && j.error) msg = j.error;
+      } catch {
+        /* 正文不是 JSON 时保留状态码 */
+      }
+      throw new Error(msg);
+    }
     return (await r.json()) as T;
   } finally {
     window.clearTimeout(timer);
@@ -281,6 +290,24 @@ export async function verifyLogin(preauth: string, captchaId: string, captchaAns
       captcha_id: captchaId,
       captcha_answer: captchaAnswer,
     }),
+  }, 10000);
+}
+
+// 手机号登录：发送短信验证码（演示环境明文返回验证码，生产替换为短信通道）。
+export async function sendSmsCode(phone: string): Promise<{ demo_code?: string; note?: string }> {
+  return fetchJSON<{ demo_code?: string; note?: string }>("/api/auth/sms/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone: phone }),
+  }, 10000);
+}
+
+// 手机号+短信验证码登录：短信码即人机验证，通过直接进入。
+export async function loginPhone(phone: string, code: string): Promise<void> {
+  await fetchJSON("/api/auth/login-phone", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone: phone, code: code }),
   }, 10000);
 }
 

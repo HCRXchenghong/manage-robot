@@ -61,6 +61,9 @@ func main() {
 	auth.SeedUser("superadmin", "超级管理员", "Super@2026", "super", nil)
 	auth.SeedUser("boss_a", "甲方负责人", "Boss@2026", "group_admin", []string{"g-2"})
 	auth.SeedUser("ops_a", "运维调度员", "Ops@2026", "user", []string{"g-2"})
+	auth.SetPhone("superadmin", "13800000000")
+	auth.SetPhone("boss_a", "13800000001")
+	auth.SetPhone("ops_a", "13800000002")
 	log.Printf("[fleet] 演示账号：superadmin/Super@2026（超管）· boss_a/Boss@2026（分组管理员）· ops_a/Ops@2026（用户）")
 	svc := &Services{maps: maps, cfg: cfg, nav: nav, open: open, auth: auth, groups: groups}
 

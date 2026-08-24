@@ -30,6 +30,10 @@ const (
 	lockDuration     = 30 * time.Minute
 	captchaTTL       = 5 * time.Minute
 	captchaMaxTries  = 3
+	smsTTL           = 5 * time.Minute
+	smsMaxTries      = 5
+	smsCooldown      = 60 * time.Second
+	smsDailyMax      = 10
 	sessionIdleTTL   = 30 * time.Minute
 	sessionAbsTTL    = 8 * time.Hour
 	passwordLifetime = 180 * 24 * time.Hour // 等保：密码最长使用期限
@@ -80,6 +84,31 @@ type captcha struct {
 	exp    time.Time
 	tries  int
 }
+
+// smsEntry 短信验证码状态：5 分钟有效、错 5 次作废、60 秒重发冷却、每日上限。
+type smsEntry struct {
+	code     string
+	exp      time.Time
+	tries    int
+	lastSend time.Time
+	dayKey   string
+	dayCount int
+}
+
+// validCNPhone 大陆手机号格式：1 开头、第二位 3-9、共 11 位数字。
+func validCNPhone(p string) bool {
+	if len(p) != 11 || p[0] != '1' || p[1] < '3' || p[1] > '9' {
+		return false
+	}
+	for i := 2; i < 11; i++ {
+		if p[i] < '0' || p[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func maskPhone(p string) string { return p[:3] + "****" + p[7:] }
 
 // renderCaptcha 画一张 132x48 的干扰图：4 个字符、随机抖动、噪线与噪点。
 func renderCaptcha(text string) []byte {
@@ -143,6 +172,7 @@ type User struct {
 	DisplayName string   `json:"display_name"`
 	Role        string   `json:"role"` // super|group_admin|user
 	Groups      []string `json:"groups"`
+	Phone       string   `json:"phone"`
 	PassHash    string   `json:"-"`
 	Salt        string   `json:"-"`
 	CreatedNS   int64    `json:"created_ns"`
@@ -166,6 +196,7 @@ type AuthStore struct {
 	sessions map[string]*Session
 	captchas map[string]*captcha
 	preauths map[string]*preauth
+	sms      map[string]*smsEntry
 	groups   *GroupStore
 	st       *State
 	open     *OpenAPI
@@ -178,7 +209,7 @@ type preauth struct {
 }
 
 func NewAuthStore(groups *GroupStore, st *State, open *OpenAPI) *AuthStore {
-	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, preauths: map[string]*preauth{}, groups: groups, st: st, open: open}
+	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, preauths: map[string]*preauth{}, sms: map[string]*smsEntry{}, groups: groups, st: st, open: open}
 	go a.cleanupLoop()
 	return a
 }
@@ -353,6 +384,125 @@ func (a *AuthStore) FinishLogin(preToken, capID, capAns, ip string) (*Session, e
 	return sess, nil
 }
 
+// SendSmsCode 发送短信验证码。演示环境未接短信网关：验证码原样返回前端展示；
+// 生产应替换为真实短信通道（阿里云/腾讯云短信），并去掉返回值里的明文码。
+func (a *AuthStore) SendSmsCode(phone string) (string, error) {
+	if !validCNPhone(phone) {
+		return "", fmt.Errorf("手机号格式不正确")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var owner *User
+	for _, u := range a.users {
+		if u.Phone == phone {
+			owner = u
+			break
+		}
+	}
+	if owner == nil {
+		return "", fmt.Errorf("该手机号未绑定本平台账号，请联系管理员绑定")
+	}
+	now := time.Now()
+	day := now.Format("2006-01-02")
+	e := a.sms[phone]
+	if e == nil {
+		e = &smsEntry{}
+		a.sms[phone] = e
+	}
+	if !e.lastSend.IsZero() {
+		if wait := smsCooldown - now.Sub(e.lastSend); wait > 0 {
+			return "", fmt.Errorf("请 %d 秒后再发送", int(wait.Seconds())+1)
+		}
+	}
+	if e.dayKey != day {
+		e.dayKey = day
+		e.dayCount = 0
+	}
+	if e.dayCount >= smsDailyMax {
+		return "", fmt.Errorf("今日发送次数已达上限，请明日再试")
+	}
+	code := fmt.Sprintf("%06d", mrand.Intn(1000000))
+	e.code = code
+	e.exp = now.Add(smsTTL)
+	e.tries = 0
+	e.lastSend = now
+	e.dayCount++
+	return code, nil
+}
+
+// LoginPhone 手机号+短信验证码登录：短信码本身即人机验证，通过直接发会话。
+func (a *AuthStore) LoginPhone(phone, code, ip string) (*Session, error) {
+	if !validCNPhone(phone) {
+		return nil, fmt.Errorf("手机号格式不正确")
+	}
+	a.mu.Lock()
+	e, ok := a.sms[phone]
+	if !ok || time.Now().After(e.exp) {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("验证码已失效，请重新获取")
+	}
+	if e.code != code {
+		e.tries++
+		if e.tries >= smsMaxTries {
+			delete(a.sms, phone)
+			a.mu.Unlock()
+			return nil, fmt.Errorf("验证码错误次数过多，请重新获取")
+		}
+		a.mu.Unlock()
+		return nil, fmt.Errorf("短信验证码错误")
+	}
+	delete(a.sms, phone)
+	var owner *User
+	for _, u := range a.users {
+		if u.Phone == phone {
+			owner = u
+			break
+		}
+	}
+	if owner == nil {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("该手机号未绑定本平台账号")
+	}
+	if owner.LockedUntil > time.Now().UnixNano() {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("账号已锁定，请稍后再试")
+	}
+	sess := &Session{
+		Token: randToken(24), Username: owner.Username, Role: owner.Role,
+		Groups:    append([]string(nil), owner.Groups...),
+		CreatedNS: time.Now().UnixNano(), lastUse: time.Now(),
+	}
+	a.sessions[sess.Token] = sess
+	a.mu.Unlock()
+	a.auditLogin(owner.Username, ip, "ok", "手机号+短信验证码登录成功")
+	if a.st != nil {
+		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", owner.DisplayName, owner.Role))
+	}
+	return sess, nil
+}
+
+// SetPhone 绑定/更换账号手机号（空串为解绑），拒绝重复绑定。
+func (a *AuthStore) SetPhone(username, phone string) (*User, error) {
+	if phone != "" && !validCNPhone(phone) {
+		return nil, fmt.Errorf("手机号格式不正确")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, ok := a.users[username]
+	if !ok {
+		return nil, fmt.Errorf("账号不存在")
+	}
+	if phone != "" {
+		for n, o := range a.users {
+			if o.Phone == phone && n != username {
+				return nil, fmt.Errorf("该手机号已绑定账号 " + n)
+			}
+		}
+	}
+	u.Phone = phone
+	return u, nil
+}
+
 func (a *AuthStore) auditLogin(username, ip, result, detail string) {
 	if a.open != nil {
 		a.open.logAudit(AuditEntry{
@@ -432,6 +582,11 @@ func (a *AuthStore) cleanupLoop() {
 				delete(a.captchas, id)
 			}
 		}
+		for ph, s := range a.sms {
+			if now.After(s.exp.Add(time.Hour)) {
+				delete(a.sms, ph)
+			}
+		}
 		for t2, s := range a.sessions {
 			if now.Sub(s.lastUse) > sessionIdleTTL {
 				delete(a.sessions, t2)
@@ -449,7 +604,7 @@ const ctxSession ctxKey = "session"
 
 func isPublicPath(p string) bool {
 	switch p {
-	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/api/captcha", "/api/auth/login", "/api/auth/verify":
+	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/api/captcha", "/api/auth/login", "/api/auth/verify", "/api/auth/sms/send", "/api/auth/login-phone":
 		return true
 	}
 	return strings.HasPrefix(p, "/assets/")
