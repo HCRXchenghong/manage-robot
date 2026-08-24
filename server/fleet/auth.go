@@ -165,13 +165,20 @@ type AuthStore struct {
 	users    map[string]*User
 	sessions map[string]*Session
 	captchas map[string]*captcha
+	preauths map[string]*preauth
 	groups   *GroupStore
 	st       *State
 	open     *OpenAPI
 }
 
+// preauth 账密已通过、等待人机验证的中间态（5 分钟、一次性）。
+type preauth struct {
+	username string
+	exp      time.Time
+}
+
 func NewAuthStore(groups *GroupStore, st *State, open *OpenAPI) *AuthStore {
-	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, groups: groups, st: st, open: open}
+	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, preauths: map[string]*preauth{}, groups: groups, st: st, open: open}
 	go a.cleanupLoop()
 	return a
 }
@@ -272,23 +279,21 @@ func (a *AuthStore) checkCaptcha(id, ans string) error {
 	return nil
 }
 
-// Login 校验账密（含锁定策略），成功发会话。
-func (a *AuthStore) Login(username, pwd, capID, capAns, ip string) (*Session, string, error) {
-	if err := a.checkCaptcha(capID, capAns); err != nil {
-		return nil, "", err
-	}
+// LoginPassword 第一段：校验账密（含锁定策略），通过发预认证 token。
+// 人机验证放到第二段（点登录后才出验证码），体验与安全兼顾。
+func (a *AuthStore) LoginPassword(username, pwd, ip string) (string, string, error) {
 	a.mu.Lock()
 	u, ok := a.users[username]
 	if !ok {
 		a.mu.Unlock()
 		a.auditLogin(username, ip, "auth_failed", "用户不存在")
-		return nil, "", fmt.Errorf("账号或密码错误")
+		return "", "", fmt.Errorf("账号或密码错误")
 	}
 	if u.LockedUntil > time.Now().UnixNano() {
 		left := time.Duration(u.LockedUntil-time.Now().UnixNano()) / time.Minute
 		a.mu.Unlock()
 		a.auditLogin(username, ip, "auth_failed", "账号锁定中")
-		return nil, "", fmt.Errorf("账号已锁定，请 %d 分钟后再试", left+1)
+		return "", "", fmt.Errorf("账号已锁定，请 %d 分钟后再试", left+1)
 	}
 	if hashPassword(u.Salt, pwd) != u.PassHash {
 		u.FailCount++
@@ -300,28 +305,52 @@ func (a *AuthStore) Login(username, pwd, capID, capAns, ip string) (*Session, st
 		}
 		a.mu.Unlock()
 		a.auditLogin(username, ip, "auth_failed", msg)
-		return nil, "", fmt.Errorf("%s", msg)
+		return "", "", fmt.Errorf("%s", msg)
 	}
 	u.FailCount = 0
 	u.LockedUntil = 0
+	token := randToken(16)
+	a.preauths[token] = &preauth{username: username, exp: time.Now().Add(captchaTTL)}
+	passAge := time.Since(time.Unix(0, u.PassSetNS))
+	expiring := passAge > passwordLifetime-14*24*time.Hour
+	a.mu.Unlock()
+	a.auditLogin(username, ip, "ok", "账密校验通过，进入人机验证")
+	note := ""
+	if expiring {
+		note = "密码即将到期（180 天），请尽快修改"
+	}
+	return token, note, nil
+}
+
+// FinishLogin 第二段：人机验证通过 → 发会话。
+func (a *AuthStore) FinishLogin(preToken, capID, capAns, ip string) (*Session, error) {
+	if err := a.checkCaptcha(capID, capAns); err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	p, ok := a.preauths[preToken]
+	if !ok || time.Now().After(p.exp) {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("登录状态已失效，请重新输入账号密码")
+	}
+	delete(a.preauths, preToken) // 一次性
+	u, ok2 := a.users[p.username]
+	if !ok2 {
+		a.mu.Unlock()
+		return nil, fmt.Errorf("账号不存在")
+	}
 	sess := &Session{
 		Token: randToken(24), Username: u.Username, Role: u.Role,
 		Groups:    append([]string(nil), u.Groups...),
 		CreatedNS: time.Now().UnixNano(), lastUse: time.Now(),
 	}
 	a.sessions[sess.Token] = sess
-	passAge := time.Since(time.Unix(0, u.PassSetNS))
-	expiring := passAge > passwordLifetime-14*24*time.Hour
 	a.mu.Unlock()
-	a.auditLogin(username, ip, "ok", "登录成功")
+	a.auditLogin(u.Username, ip, "ok", "人机验证通过，登录成功")
 	if a.st != nil {
 		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", u.DisplayName, u.Role))
 	}
-	note := ""
-	if expiring {
-		note = "密码即将到期（180 天），请尽快修改"
-	}
-	return sess, note, nil
+	return sess, nil
 }
 
 func (a *AuthStore) auditLogin(username, ip, result, detail string) {
@@ -420,7 +449,7 @@ const ctxSession ctxKey = "session"
 
 func isPublicPath(p string) bool {
 	switch p {
-	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/api/captcha", "/api/auth/login":
+	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/api/captcha", "/api/auth/login", "/api/auth/verify":
 		return true
 	}
 	return strings.HasPrefix(p, "/assets/")

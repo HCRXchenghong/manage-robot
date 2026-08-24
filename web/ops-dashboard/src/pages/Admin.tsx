@@ -1,6 +1,7 @@
-// 组织管理：分组（= 独立项目平台）与成员。
-//   超管：所有分组与人、配额调整（管理员默认5/组、用户默认10/组、超管全局≤10）
-//   普通管理员：只能管自己分组内的人
+// 组织与成员管理。
+//   超管视角：分组（独立项目平台）+ 成员 + 配额，全部可见可调。
+//   管理员视角：只看到「成员管理」——不出现任何「分组」字样，
+//   让甲方觉得这就是独属于他们自己的平台。
 import { useCallback, useEffect, useState } from "react";
 import {
   createGroup, createUser, deleteGroup, deleteUser, fetchGroups, fetchUsers,
@@ -9,7 +10,7 @@ import {
 import type { GroupInfo, Me, UserInfo } from "../types";
 
 const roleLabel = (r: string) =>
-  r === "super" ? "超级管理员" : r === "group_admin" ? "普通管理员" : "用户";
+  r === "super" ? "超级管理员" : r === "group_admin" ? "管理员" : "用户";
 
 export default function AdminPage({ me }: { me: Me }) {
   const [groups, setGroups] = useState<GroupInfo[]>([]);
@@ -17,7 +18,7 @@ export default function AdminPage({ me }: { me: Me }) {
   const [msg, setMsg] = useState("");
   const [newGroup, setNewGroup] = useState("");
   const [form, setForm] = useState({ username: "", display_name: "", password: "", role: "user", groups: [] as string[] });
-  const [editing, setEditing] = useState(""); // 展开编辑的用户名
+  const [editing, setEditing] = useState("");
   const [editPwd, setEditPwd] = useState("");
 
   const isSuper = me.role === "super";
@@ -45,9 +46,6 @@ export default function AdminPage({ me }: { me: Me }) {
     void reload();
   };
 
-  const myGroupSet = new Set(me.groups);
-  const editableGroups = isSuper ? groups : groups.filter((g) => myGroupSet.has(g.id));
-
   const toggleFormGroup = (gid: string, list: string[], set: (v: string[]) => void) => {
     set(list.includes(gid) ? list.filter((x) => x !== gid) : [...list, gid]);
   };
@@ -61,39 +59,37 @@ export default function AdminPage({ me }: { me: Me }) {
 
   return (
     <div style={{ padding: 16, overflow: "auto", height: "100%" }}>
-      <div style={{ fontSize: 16, fontWeight: 700 }}>组织管理</div>
+      <div style={{ fontSize: 16, fontWeight: 700 }}>{isSuper ? "组织管理" : "成员管理"}</div>
       <div className="muted" style={{ marginBottom: 12 }}>
-        分组 = 一个独立的项目平台：车辆、地图、任务都按分组隔离。超级管理员全局 ≤10 人；
-        每分组默认最多 5 名普通管理员、10 名用户（超管可调）。
+        {isSuper
+          ? "分组 = 一个独立的项目平台：车辆、地图、任务都按分组隔离。超级管理员全局 ≤10 人；每分组默认最多 5 名管理员、10 名用户（可调）。"
+          : "管理平台成员：创建账号、重置密码、删除账号。"}
       </div>
       {msg && <div className="notice">{msg}</div>}
 
-      <div className="panel" style={{ padding: 14, marginBottom: 12 }}>
-        <div className="panel-title">分组管理</div>
-        {isSuper && (
+      {isSuper && (
+        <div className="panel" style={{ padding: 14, marginBottom: 12 }}>
+          <div className="panel-title">分组管理</div>
           <div className="btn-row" style={{ marginBottom: 10 }}>
             <input className="input" style={{ width: 240 }} placeholder="新分组名称（如：XX 园区项目）" value={newGroup} onChange={(e) => setNewGroup(e.target.value)} />
             <button className="btn primary" onClick={() => void wrap(async () => { await createGroup(newGroup); setNewGroup(""); }, "分组已创建")}>
               创建分组
             </button>
           </div>
-        )}
-        <table className="table">
-          <thead>
-            <tr>
-              <th>分组 ID</th><th>名称</th><th>管理员（{""}在用/配额）</th><th>用户（在用/配额）</th>
-              {isSuper && <th>配额调整</th>}
-              {isSuper && <th></th>}
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g) => (
-              <tr key={g.id}>
-                <td className="mono">{g.id}</td>
-                <td>{g.name}</td>
-                <td className="mono">{g.admins ?? 0} / {g.max_admins}</td>
-                <td className="mono">{g.users ?? 0} / {g.max_users}</td>
-                {isSuper && (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>分组 ID</th><th>名称</th><th>管理员（在用/配额）</th><th>用户（在用/配额）</th>
+                <th>配额调整</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((g) => (
+                <tr key={g.id}>
+                  <td className="mono">{g.id}</td>
+                  <td>{g.name}</td>
+                  <td className="mono">{g.admins ?? 0} / {g.max_admins}</td>
+                  <td className="mono">{g.users ?? 0} / {g.max_users}</td>
                   <td>
                     <span className="row" style={{ gap: 4 }}>
                       <input className="input" style={{ width: 56 }} type="number" value={g.max_admins}
@@ -103,17 +99,15 @@ export default function AdminPage({ me }: { me: Me }) {
                       <button className="btn small" onClick={() => saveQuota(g)}>保存</button>
                     </span>
                   </td>
-                )}
-                {isSuper && (
                   <td>
                     <button className="btn small danger" onClick={() => void wrap(() => deleteGroup(g.id), "分组已删除")}>删除</button>
                   </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="panel" style={{ padding: 14, marginBottom: 12 }}>
         <div className="panel-title">新建账号</div>
@@ -123,14 +117,14 @@ export default function AdminPage({ me }: { me: Me }) {
           <input className="input" style={{ width: 180 }} type="password" placeholder="初始密码（≥8位含3类字符）" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
           <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
             {isSuper && <option value="super">超级管理员</option>}
-            <option value="group_admin">普通管理员</option>
+            <option value="group_admin">管理员</option>
             <option value="user">用户</option>
           </select>
         </div>
-        {form.role !== "super" && (
+        {isSuper && form.role !== "super" && (
           <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
             <span className="muted" style={{ fontSize: 12 }}>所属分组：</span>
-            {editableGroups.map((g) => (
+            {groups.map((g) => (
               <label key={g.id} className="chip" style={{ cursor: "pointer" }}>
                 <input
                   type="checkbox"
@@ -141,6 +135,9 @@ export default function AdminPage({ me }: { me: Me }) {
               </label>
             ))}
           </div>
+        )}
+        {!isSuper && (
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>新账号创建后即可登录本平台。</div>
         )}
         <button
           className="btn primary"
@@ -154,10 +151,14 @@ export default function AdminPage({ me }: { me: Me }) {
       </div>
 
       <div className="panel" style={{ padding: 14 }}>
-        <div className="panel-title">成员列表 <span className="hint">（{isSuper ? "全部分组" : "仅我所在分组"}）</span></div>
+        <div className="panel-title">成员列表 <span className="hint">（{isSuper ? "全部分组" : "本平台"}）</span></div>
         <table className="table">
           <thead>
-            <tr><th>用户名</th><th>姓名</th><th>角色</th><th>分组</th><th></th></tr>
+            <tr>
+              <th>用户名</th><th>姓名</th><th>角色</th>
+              {isSuper && <th>分组</th>}
+              <th></th>
+            </tr>
           </thead>
           <tbody>
             {users.map((u) => (
@@ -170,7 +171,9 @@ export default function AdminPage({ me }: { me: Me }) {
                       {roleLabel(u.role)}
                     </span>
                   </td>
-                  <td className="muted">{u.role === "super" ? "—" : u.groups.map((g) => groups.find((x) => x.id === g)?.name || g).join("、")}</td>
+                  {isSuper && (
+                    <td className="muted">{u.role === "super" ? "—" : (u.groups || []).map((g) => groups.find((x) => x.id === g)?.name || g).join("、")}</td>
+                  )}
                   <td>
                     {u.username !== me.username && u.role !== "super" && (
                       <span className="row" style={{ gap: 4 }}>
@@ -186,21 +189,23 @@ export default function AdminPage({ me }: { me: Me }) {
                 </tr>
                 {editing === u.username && (
                   <tr key={u.username + "-edit"}>
-                    <td colSpan={5} style={{ background: "var(--bg-soft)" }}>
-                      <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-                        <span className="muted" style={{ fontSize: 12 }}>调整分组：</span>
-                        {editableGroups.map((g) => (
-                          <label key={g.id} className="chip" style={{ cursor: "pointer" }}>
-                            <input
-                              type="checkbox"
-                              checked={u.groups.includes(g.id)}
-                              onChange={() => void wrap(() => setUserGroups(u.username,
-                                u.groups.includes(g.id) ? u.groups.filter((x) => x !== g.id) : [...u.groups, g.id]), "分组已更新")}
-                            />
-                            {" "}{g.name}
-                          </label>
-                        ))}
-                      </div>
+                    <td colSpan={isSuper ? 5 : 4} style={{ background: "var(--bg-soft)" }}>
+                      {isSuper && (
+                        <div className="row" style={{ gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                          <span className="muted" style={{ fontSize: 12 }}>调整分组：</span>
+                          {groups.map((g) => (
+                            <label key={g.id} className="chip" style={{ cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={(u.groups || []).includes(g.id)}
+                                onChange={() => void wrap(() => setUserGroups(u.username,
+                                  (u.groups || []).includes(g.id) ? (u.groups || []).filter((x) => x !== g.id) : [...(u.groups || []), g.id]), "分组已更新")}
+                              />
+                              {" "}{g.name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
                       <div className="row" style={{ gap: 6 }}>
                         <input className="input" style={{ width: 240 }} type="password" placeholder="重置为新密码（≥8位含3类字符）" value={editPwd} onChange={(e) => setEditPwd(e.target.value)} />
                         <button className="btn small" onClick={() => void wrap(() => resetUserPassword(u.username, editPwd), "密码已重置，该用户会话已强制下线")}>

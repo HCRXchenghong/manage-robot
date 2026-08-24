@@ -27,9 +27,23 @@ func registerAuthRoutes(mux *http.ServeMux, svc *Services) {
 		}
 		u, _ := body["username"].(string)
 		p, _ := body["password"].(string)
+		token, note, err := svc.auth.LoginPassword(u, p, r.RemoteAddr)
+		if err != nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "note": note, "preauth": token})
+	})
+	// 第二段：人机验证通过才发会话 Cookie。
+	mux.HandleFunc("POST /api/auth/verify", func(w http.ResponseWriter, r *http.Request) {
+		body := readJSONBody(w, r)
+		if body == nil {
+			return
+		}
+		pre, _ := body["preauth"].(string)
 		cid, _ := body["captcha_id"].(string)
 		cans, _ := body["captcha_answer"].(string)
-		sess, note, err := svc.auth.Login(u, p, cid, cans, r.RemoteAddr)
+		sess, err := svc.auth.FinishLogin(pre, cid, cans, r.RemoteAddr)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
@@ -39,7 +53,7 @@ func registerAuthRoutes(mux *http.ServeMux, svc *Services) {
 			HttpOnly: true, SameSite: http.SameSiteLaxMode, MaxAge: 7 * 24 * 3600,
 		})
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": true, "note": note,
+			"ok": true,
 			"me": map[string]any{"username": sess.Username, "role": sess.Role, "groups": sess.Groups},
 		})
 	})
@@ -106,6 +120,11 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 		sess := sessOf(r)
 		if sess == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "未登录"})
+			return
+		}
+		// 普通管理员不感知「分组」概念：返回空列表，前端自然不显示。
+		if sess.Role == "group_admin" {
+			writeJSON(w, http.StatusOK, map[string]any{"groups": []any{}})
 			return
 		}
 		all := svc.groups.List()
@@ -195,6 +214,12 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 				out = append(out, u)
 			}
 		}
+		// 普通管理员看不到分组字段（甲方视角：这就是他的平台成员列表）。
+		if sess.Role == "group_admin" {
+			for _, u := range out {
+				u.Groups = nil
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"users": out})
 	})
 
@@ -219,8 +244,11 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "普通管理员不能创建超级管理员"})
 				return
 			}
-			if !intersects(sess.Groups, groups) {
-				writeJSON(w, http.StatusForbidden, map[string]string{"error": "只能把账号建在自己所在分组"})
+			// 普通管理员建号默认进自己的分组（前端不展示分组选择）。
+			if len(groups) == 0 {
+				groups = sess.Groups
+			} else if !intersects(sess.Groups, groups) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "权限不足"})
 				return
 			}
 		}

@@ -47,7 +47,7 @@ const NAV: { id: PageId; icon: string; label: string; adminOnly?: boolean }[] = 
 ];
 
 const roleLabel = (r: string) =>
-  r === "super" ? "超级管理员" : r === "group_admin" ? "普通管理员" : "用户";
+  r === "super" ? "超级管理员" : r === "group_admin" ? "管理员" : "用户";
 
 export default function App() {
   const fleet = useFleet(); // hooks 必须无条件调用（登录态判断在其后）
@@ -127,7 +127,7 @@ export default function App() {
                 onClick={() => setPage(n.id)}
               >
                 <span className="nav-icon"><NavIcon name={n.icon} /></span>
-                <span>{n.label}</span>
+                <span>{n.id === "admin" && me.role === "group_admin" ? "成员管理" : n.label}</span>
               </button>
             ))}
           </nav>

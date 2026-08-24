@@ -29,7 +29,6 @@ export default function TopBar({ snap, source, wsConnected }: Props) {
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-logo">机</div>
         <div>
           <div className="brand-name" style={{ fontSize: 14, letterSpacing: 0.5 }}>机器人集中管理调度平台</div>
           <div className="brand-sub">车队数字孪生 · 集中调度 · 远程接管</div>

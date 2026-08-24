@@ -259,13 +259,25 @@ export async function fetchCaptcha(): Promise<{ captcha_id: string; image: strin
   return fetchJSON<{ captcha_id: string; image: string }>("/api/captcha");
 }
 
-export async function login(username: string, password: string, captchaId: string, captchaAnswer: string): Promise<{ note?: string }> {
-  return fetchJSON<{ note?: string }>("/api/auth/login", {
+// 登录第一段：账密校验，通过返回预认证 token（人机验证在第二段）。
+export async function login(username: string, password: string): Promise<{ preauth: string; note?: string }> {
+  return fetchJSON<{ preauth: string; note?: string }>("/api/auth/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       username: username,
       password: password,
+    }),
+  }, 10000);
+}
+
+// 登录第二段：人机验证通过 → 服务端发会话 Cookie。
+export async function verifyLogin(preauth: string, captchaId: string, captchaAnswer: string): Promise<void> {
+  await fetchJSON("/api/auth/verify", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      preauth: preauth,
       captcha_id: captchaId,
       captcha_answer: captchaAnswer,
     }),
