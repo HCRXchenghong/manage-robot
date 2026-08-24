@@ -263,6 +263,8 @@ def main():
     ap.add_argument("--heartbeat-hz", type=float, default=0.5)
     ap.add_argument("--uplink", choices=["udp", "mqtt"], default="udp",
                     help="udp=本地演示通道；mqtt=mTLS 真实通道（第 5b 步）")
+    ap.add_argument("--group", default=os.environ.get("RA_GROUP", "g-2"),
+                    help="本网关所辖车辆的分组（分组 = 独立项目平台）")
     ap.add_argument("--mqtt-host", default="localhost")
     ap.add_argument("--mqtt-port", type=int, default=8883)
     ap.add_argument("--ca", default="deploy/pki/dev/ca.crt")
@@ -284,6 +286,7 @@ def main():
             "stack": "AUTONOMY_STACK_ROS1",
             "stack_version": "ROS 1 Noetic",
             "chassis_type": args.chassis,
+            "group": args.group,
             "supported_control_modes": ["CONTROL_MODE_TARGET_MOTION"],
             "topic_mapping_version": "ros1-map-v0.1",
             "modems": [{"modem_id": "sim-a", "carrier": "carrier-A"},

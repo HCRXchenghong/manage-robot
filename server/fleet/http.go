@@ -26,20 +26,22 @@ var webDist embed.FS
 
 // Services 聚合第 10 步之后新增的后端模块（地图/配置/循迹/开放 API）。
 type Services struct {
-	maps *MapStore
-	cfg  *ConfigStore
-	nav  *NavStore
-	open *OpenAPI
+	maps   *MapStore
+	cfg    *ConfigStore
+	nav    *NavStore
+	open   *OpenAPI
+	auth   *AuthStore
+	groups *GroupStore
 }
 
 func buildHandler(st *State, hub *Hub, pc *pointCloudGen, svc *Services) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/fleet", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, st.Snapshot())
+		writeJSON(w, http.StatusOK, filterSnapFor(st.Snapshot(), sessOf(r)))
 	})
 	mux.HandleFunc("GET /api/vehicles/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, ok := st.Vehicle(r.PathValue("id"))
-		if !ok {
+		if !ok || !canAccessVehicle(sessOf(r), st, v.VehicleID) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "vehicle not found"})
 			return
 		}
@@ -108,9 +110,12 @@ func buildHandler(st *State, hub *Hub, pc *pointCloudGen, svc *Services) http.Ha
 	registerConfigRoutes(mux, svc)
 	registerNavRoutes(mux, svc)
 	registerOpenAPIRoutes(mux, svc)
+	registerAuthRoutes(mux, svc)
+	registerAdminRoutes(mux, svc)
 
 	mux.Handle("/", spaHandler())
-	return withCORS(mux)
+	// 顺序：鉴权（最外）→ 安全头/防索引 → CORS → 路由
+	return svc.auth.Middleware(withSecurityHeaders(withCORS(mux)))
 }
 
 // withCORS 开发期放开 /api/*（vite dev 代理本就同源）；
@@ -129,6 +134,71 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// withSecurityHeaders 等保三级配套响应头 + 防搜索引擎索引（X-Robots-Tag）。
+func withSecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// filterSnapFor 按会话分组过滤全量快照：超管全量；其他角色只见本分组车辆/事件。
+func filterSnapFor(snap FleetSnap, sess *Session) FleetSnap {
+	if sess == nil || sess.Role == "super" {
+		return snap
+	}
+	allowed := map[string]bool{}
+	for _, g := range sess.Groups {
+		allowed[g] = true
+	}
+	vGroup := map[string]string{}
+	for _, v := range snap.Vehicles {
+		vGroup[v.VehicleID] = v.Group
+	}
+	vs := make([]VehicleSnap, 0, len(snap.Vehicles))
+	for _, v := range snap.Vehicles {
+		if allowed[v.Group] {
+			vs = append(vs, v)
+		}
+	}
+	snap.Vehicles = vs
+	evs := make([]EventSnap, 0, len(snap.Events))
+	for _, e := range snap.Events {
+		if e.VehicleID == "" {
+			continue // 平台级事件只给超管看
+		}
+		if allowed[vGroup[e.VehicleID]] {
+			evs = append(evs, e)
+		}
+	}
+	snap.Events = evs
+	return snap
+}
+
+// canAccessVehicle 该会话能否操作此车（超管全量；否则须同分组）。
+func canAccessVehicle(sess *Session, st *State, vehicleID string) bool {
+	if sess == nil {
+		return false
+	}
+	if sess.Role == "super" {
+		return true
+	}
+	v, ok := st.Vehicle(vehicleID)
+	if !ok {
+		return false
+	}
+	for _, g := range sess.Groups {
+		if g == v.Group {
+			return true
+		}
+	}
+	return false
 }
 
 // spaHandler 服务内嵌前端产物；未命中的路径回退 index.html（SPA 路由）。

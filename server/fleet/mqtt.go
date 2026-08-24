@@ -107,6 +107,7 @@ func routeMQTT(st *State, topic string, payload []byte) {
 			StackVersion        string `json:"stack_version"`
 			GatewayVersion      string `json:"gateway_version"`
 			TopicMappingVersion string `json:"topic_mapping_version"`
+			Group               string `json:"group"`
 		}
 		if err := json.Unmarshal(env.Payload, &caps); err != nil {
 			log.Printf("register payload 解析失败: %v", err)
@@ -117,7 +118,7 @@ func routeMQTT(st *State, topic string, payload []byte) {
 			"stack_version":   caps.StackVersion,
 			"gateway_version": caps.GatewayVersion,
 			"topic_mapping":   caps.TopicMappingVersion,
-		})
+		}, caps.Group)
 	case "telemetry":
 		var su struct {
 			Signals []struct {

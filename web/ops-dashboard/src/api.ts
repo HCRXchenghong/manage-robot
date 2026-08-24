@@ -5,10 +5,13 @@ import type {
   AuditEntry,
   EventSnap,
   FleetSnap,
+  GroupInfo,
   MapEntry,
+  Me,
   NavPoint,
   NavRoute,
   PointCloudResp,
+  UserInfo,
 } from "./types";
 import { mockFleet, tickMock } from "./mock";
 
@@ -248,4 +251,109 @@ export async function revokeKey(id: string): Promise<void> {
 export async function fetchAudit(limit = 100): Promise<AuditEntry[]> {
   const r = await fetchJSON<{ audit: AuditEntry[] }>("/api/audit?limit=" + limit);
   return r.audit || [];
+}
+
+// ---------- 登录与账号（等保三级） ----------
+
+export async function fetchCaptcha(): Promise<{ captcha_id: string; image: string }> {
+  return fetchJSON<{ captcha_id: string; image: string }>("/api/captcha");
+}
+
+export async function login(username: string, password: string, captchaId: string, captchaAnswer: string): Promise<{ note?: string }> {
+  return fetchJSON<{ note?: string }>("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username: username,
+      password: password,
+      captcha_id: captchaId,
+      captcha_answer: captchaAnswer,
+    }),
+  }, 10000);
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetchJSON("/api/auth/logout", { method: "POST" });
+  } catch {
+    /* 会话已失效也照样回登录页 */
+  }
+}
+
+export async function fetchMe(): Promise<Me | null> {
+  try {
+    return await fetchJSON<Me>("/api/auth/me");
+  } catch {
+    return null;
+  }
+}
+
+export async function changePassword(oldPwd: string, newPwd: string): Promise<void> {
+  await fetchJSON("/api/auth/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ old: oldPwd, new: newPwd }),
+  });
+}
+
+// ---------- 组织管理 ----------
+
+export async function fetchGroups(): Promise<GroupInfo[]> {
+  const r = await fetchJSON<{ groups: GroupInfo[] }>("/api/admin/groups");
+  return r.groups || [];
+}
+
+export async function createGroup(name: string): Promise<void> {
+  await fetchJSON("/api/admin/groups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name }),
+  });
+}
+
+export async function updateGroup(id: string, patchBody: Record<string, unknown>): Promise<void> {
+  await fetchJSON("/api/admin/groups/" + encodeURIComponent(id), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patchBody),
+  });
+}
+
+export async function deleteGroup(id: string): Promise<void> {
+  await fetchJSON("/api/admin/groups/" + encodeURIComponent(id) + "/delete", { method: "POST" });
+}
+
+export async function fetchUsers(): Promise<UserInfo[]> {
+  const r = await fetchJSON<{ users: UserInfo[] }>("/api/admin/users");
+  return r.users || [];
+}
+
+export async function createUser(body: {
+  username: string; display_name: string; password: string; role: string; groups: string[];
+}): Promise<void> {
+  await fetchJSON("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export async function setUserGroups(username: string, groups: string[]): Promise<void> {
+  await fetchJSON("/api/admin/users/" + encodeURIComponent(username) + "/groups", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ groups: groups }),
+  });
+}
+
+export async function resetUserPassword(username: string, password: string): Promise<void> {
+  await fetchJSON("/api/admin/users/" + encodeURIComponent(username) + "/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: password }),
+  });
+}
+
+export async function deleteUser(username: string): Promise<void> {
+  await fetchJSON("/api/admin/users/" + encodeURIComponent(username) + "/delete", { method: "POST" });
 }

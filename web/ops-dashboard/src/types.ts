@@ -138,3 +138,30 @@ export interface AuditEntry {
   trace_id?: string;
   detail?: string;
 }
+
+// ---- 账号与组织（等保三级） ----
+
+export interface Me {
+  username: string;
+  role: string; // super|group_admin|user
+  groups: string[];
+  display_name?: string;
+}
+
+export interface GroupInfo {
+  id: string;
+  name: string;
+  max_admins: number;
+  max_users: number;
+  created_ns: number;
+  admins?: number;
+  users?: number;
+}
+
+export interface UserInfo {
+  username: string;
+  display_name: string;
+  role: string;
+  groups: string[];
+  created_ns: number;
+}

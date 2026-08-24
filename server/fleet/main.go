@@ -55,7 +55,14 @@ func main() {
 	cfg := NewConfigStore()
 	nav := NewNavStore(st)
 	open := NewOpenAPI(st, cfg, nav)
-	svc := &Services{maps: maps, cfg: cfg, nav: nav, open: open}
+	groups := NewGroupStore()
+	auth := NewAuthStore(groups, st, open)
+	// 演示账号（首次启动注入；等保：密码须复杂度达标，登录有验证码与锁定策略）
+	auth.SeedUser("superadmin", "超级管理员", "Super@2026", "super", nil)
+	auth.SeedUser("boss_a", "甲方负责人", "Boss@2026", "group_admin", []string{"g-2"})
+	auth.SeedUser("ops_a", "运维调度员", "Ops@2026", "user", []string{"g-2"})
+	log.Printf("[fleet] 演示账号：superadmin/Super@2026（超管）· boss_a/Boss@2026（分组管理员）· ops_a/Ops@2026（用户）")
+	svc := &Services{maps: maps, cfg: cfg, nav: nav, open: open, auth: auth, groups: groups}
 
 	if err := startMQTT(mqttOptions{
 		host: *mqttHost, port: *mqttPort,

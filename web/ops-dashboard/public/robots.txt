@@ -1,0 +1,3 @@
+# 内部平台：禁止一切搜索引擎抓取与索引（另有 X-Robots-Tag 响应头双保险）
+User-agent: *
+Disallow: /

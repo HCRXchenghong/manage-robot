@@ -43,6 +43,7 @@ type Pose struct {
 
 type VehicleSnap struct {
 	VehicleID         string            `json:"vehicle_id"`
+	Group             string            `json:"group"`
 	Online            bool              `json:"online"`
 	LastHeartbeatAgeS float64           `json:"last_heartbeat_age_s"`
 	Mode              string            `json:"mode"`
@@ -89,6 +90,7 @@ type signalVal struct {
 // vehicleState 单车可变状态（受 State.mu 保护）。
 type vehicleState struct {
 	id           string
+	group        string
 	online       bool
 	lastSeen     time.Time // 最近一次遥测时刻
 	mode         string
@@ -160,9 +162,12 @@ func (s *State) ensureVehicleLocked(id string) *vehicleState {
 }
 
 // HandleRegister 处理 vehicle/{id}/register（retained 能力注册）。
-func (s *State) HandleRegister(id, gatewayID string, caps map[string]string) {
+func (s *State) HandleRegister(id, gatewayID string, caps map[string]string, group string) {
 	s.mu.Lock()
 	v := s.ensureVehicleLocked(id)
+	if group != "" {
+		v.group = group
+	}
 	for k, val := range caps {
 		if val != "" {
 			v.capabilities[k] = val
@@ -399,6 +404,7 @@ func (s *State) Snapshot() FleetSnap {
 		}
 		out.Vehicles = append(out.Vehicles, VehicleSnap{
 			VehicleID:         v.id,
+			Group:             v.group,
 			Online:            v.online,
 			LastHeartbeatAgeS: round2(age),
 			Mode:              v.mode,

@@ -30,7 +30,28 @@ func contentTypeOf(name string) string {
 
 func registerMapRoutes(mux *http.ServeMux, svc *Services) {
 	mux.HandleFunc("GET /api/maps", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]any{"maps": svc.maps.List()})
+		all := svc.maps.List()
+		sess := sessOf(r)
+		if sess != nil && sess.Role != "super" {
+			vGroup := map[string]string{}
+			if svc.auth != nil && svc.auth.st != nil {
+				for _, v := range svc.auth.st.Snapshot().Vehicles {
+					vGroup[v.VehicleID] = v.Group
+				}
+			}
+			allowed := map[string]bool{}
+			for _, g := range sess.Groups {
+				allowed[g] = true
+			}
+			out := make([]*MapEntry, 0, len(all))
+			for _, m := range all {
+				if allowed[vGroup[m.VehicleID]] {
+					out = append(out, m)
+				}
+			}
+			all = out
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"maps": all})
 	})
 
 	// 车端/前端统一上传口：JSON + base64（避免 multipart，链路更简单）。
@@ -154,6 +175,10 @@ func registerNavRoutes(mux *http.ServeMux, svc *Services) {
 		vid, _ := body["vehicle_id"].(string)
 		name, _ := body["name"].(string)
 		trace, _ := body["trace_id"].(string)
+		if !canAccessVehicle(sessOf(r), svc.auth.st, vid) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "无权调度该车辆（不在你的分组）"})
+			return
+		}
 		var pts []NavPoint
 		if raw, ok := body["points"]; ok {
 			b, _ := json.Marshal(raw)
