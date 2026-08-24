@@ -64,3 +64,77 @@ export interface PointCloudResp {
   static: CloudPart;
   vehicles: VehicleCloud[];
 }
+
+// ---- 地图中心 ----
+
+export interface MapVersion {
+  version: number;
+  files: string[];
+  kind: string; // pcd|csv|png
+  note?: string;
+  author?: string;
+  created_ns: number;
+  derived_from?: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface MapEntry {
+  id: string;
+  vehicle_id: string;
+  name: string;
+  kind: string; // 3d_pcd|3d_csv|2d_png
+  points?: number;
+  sha256: string;
+  size: number;
+  source: string; // vehicle_push|manual|derived
+  created_ns: number;
+  updated_ns: number;
+  versions: MapVersion[];
+  latest_kind?: string;
+  has_2d: boolean;
+}
+
+// ---- 循迹导航 ----
+
+export interface NavPoint {
+  name: string;
+  x: number;
+  y: number;
+  at_ns?: number; // 计划到达时刻（定时路点，可选）
+}
+
+export interface NavRoute {
+  id: string;
+  vehicle_id: string;
+  name: string;
+  points: NavPoint[];
+  status: string; // queued|dispatched|cancelled
+  created_ns: number;
+  dispatched_ns?: number;
+  trace_id?: string;
+  origin: string; // console|open_api
+}
+
+// ---- 开放 API（等保三级） ----
+
+export interface APIKey {
+  id: string;
+  name: string;
+  prefix: string;
+  created_ns: number;
+  revoked_ns?: number;
+  last_used_ns?: number;
+}
+
+export interface AuditEntry {
+  ts_ns: number;
+  key_id?: string;
+  key_name?: string;
+  method: string;
+  path: string;
+  result: string; // ok|auth_failed|replay|rate_limited|bad_request|error
+  http: number;
+  ip?: string;
+  trace_id?: string;
+  detail?: string;
+}

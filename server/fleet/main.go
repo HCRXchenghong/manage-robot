@@ -29,6 +29,9 @@ func main() {
 	clientID := flag.String("client-id", fmt.Sprintf("fleet-hub-%d", time.Now().Unix()%100000),
 		"MQTT ClientID（必须唯一）")
 	authority := flag.String("authority", "127.0.0.1:9300", "control-authority UDP 地址（op=status 只读）")
+	mapsDir := flag.String("maps-dir", "data/maps", "地图仓库目录（服务器侧地图存储）")
+	pyBin := flag.String("python", ".venv/bin/python", "Python 解释器（3D→2D 转换脚本用）")
+	mapConvert := flag.String("map-convert", "deploy/demo/map_convert.py", "3D→2D 一行命令脚本")
 	flag.Parse()
 
 	hub := NewHub()
@@ -45,6 +48,15 @@ func main() {
 	st := NewState(hub, db, *authority)
 	pc := newPointCloudGen()
 
+	maps, err := NewMapStore(*mapsDir, *pyBin, *mapConvert, hub, st)
+	if err != nil {
+		log.Fatalf("地图仓库初始化失败: %v", err)
+	}
+	cfg := NewConfigStore()
+	nav := NewNavStore(st)
+	open := NewOpenAPI(st, cfg, nav)
+	svc := &Services{maps: maps, cfg: cfg, nav: nav, open: open}
+
 	if err := startMQTT(mqttOptions{
 		host: *mqttHost, port: *mqttPort,
 		caFile: *caFile, certFile: *certFile, keyFile: *keyFile,
@@ -54,7 +66,7 @@ func main() {
 	}
 
 	log.Printf("[fleet] fleet-hub 监听 %s（REST /api/*、WS /ws/fleet、静态站 /）", *addr)
-	if err := http.ListenAndServe(*addr, buildHandler(st, hub, pc)); err != nil {
+	if err := http.ListenAndServe(*addr, buildHandler(st, hub, pc, svc)); err != nil {
 		log.Fatalf("HTTP 服务退出: %v", err)
 	}
 }

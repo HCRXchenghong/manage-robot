@@ -20,6 +20,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 const (
@@ -115,6 +117,7 @@ type State struct {
 	dbCh chan dbJob
 
 	authorityAddr string
+	mqttPub       mqtt.Client // OnConnect 后由 mqtt.go 注入（发布车端下行话题）
 	startAt       time.Time
 }
 
@@ -558,4 +561,36 @@ func gearShort(g string) string {
 		return "P"
 	}
 	return g
+}
+
+// ---------- 下行发布（循迹导航等车端指令） ----------
+
+// SetMQTTPub 由 mqtt.go 的 OnConnect 注入客户端。
+func (s *State) SetMQTTPub(c mqtt.Client) {
+	s.mu.Lock()
+	s.mqttPub = c
+	s.mu.Unlock()
+}
+
+// PublishJSON 发布信封到 vehicle/{id}/{kind}；返回是否真的发出去了。
+// 未连上 broker 时返回 false（调用方据此把任务留在队列）。
+func (s *State) PublishJSON(vehicleID, kind string, payload []byte) bool {
+	s.mu.RLock()
+	c := s.mqttPub
+	s.mu.RUnlock()
+	if c == nil || !c.IsConnected() {
+		return false
+	}
+	env := map[string]any{
+		"message_type": "platform.v1.VehicleCommand",
+		"vehicle_id":   vehicleID,
+		"utc_time_ns":  time.Now().UnixNano(),
+		"payload":      json.RawMessage(payload),
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		return false
+	}
+	t := c.Publish(fmt.Sprintf("vehicle/%s/%s", vehicleID, kind), 1, false, b)
+	return t.Wait() && t.Error() == nil
 }

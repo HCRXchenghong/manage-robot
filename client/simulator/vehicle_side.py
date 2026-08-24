@@ -132,6 +132,48 @@ class VehicleSide:
                                   sequence=self.seq, ttl_ms=5000)
             self.send_env(env)
 
+    # ---------- 地图上报：实时推到云端地图中心 ----------
+
+    def map_push_loop(self):
+        """车端有地图文件（.pcd/.csv/.png）时，每周期上报到云端地图中心。
+        存储双份：车上原文件不动，服务器留版本化副本；
+        sha256 去重：内容没变不产生新版本、不占带宽。
+        """
+        import base64
+        import hashlib
+        import urllib.request
+
+        path = os.environ.get("RA_MAP_FILE", "/tmp/ra-ndt-map.csv")
+        hub = os.environ.get("RA_HUB", "http://127.0.0.1:9800")
+        vid = os.environ.get("RA_VEHICLE_ID", "sim-veh-001")
+        interval = float(os.environ.get("RA_MAP_PUSH_S", "15"))
+        last_sha = None
+        while True:
+            try:
+                if os.path.exists(path):
+                    with open(path, "rb") as f:
+                        data = f.read()
+                    sha = hashlib.sha256(data).hexdigest()
+                    if sha != last_sha:
+                        body = json.dumps({
+                            "vehicle_id": vid,
+                            "name": os.path.basename(path),
+                            "source": "vehicle_push",
+                            "author": vid,
+                            "data_base64": base64.b64encode(data).decode(),
+                        }).encode()
+                        req = urllib.request.Request(
+                            hub + "/api/maps/upload", data=body,
+                            headers={"Content-Type": "application/json"})
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            resp.read()
+                        last_sha = sha
+                        print(f"[车端] 地图已上报: {os.path.basename(path)} "
+                              f"sha={sha[:12]} {len(data)} 字节 -> {hub}", flush=True)
+            except Exception as e:  # 网络抖动不影响遥测主链路
+                print(f"[车端] 地图上报失败（稍后重试）: {e}", flush=True)
+            time.sleep(interval)
+
 
 def main():
     ap = argparse.ArgumentParser(description="链上车端组件")
@@ -141,7 +183,8 @@ def main():
 
     vs = VehicleSide(args.uds, args.hz)
     threading.Thread(target=vs.reader_loop, daemon=True).start()
-    print(f"[车端] 已接入 Gateway：{args.uds}，遥测 {args.hz}Hz")
+    threading.Thread(target=vs.map_push_loop, daemon=True).start()
+    print(f"[车端] 已接入 Gateway：{args.uds}，遥测 {args.hz}Hz，地图实时上报已启用")
     vs.telemetry_loop()
 
 

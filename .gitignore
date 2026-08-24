@@ -19,6 +19,9 @@ __pycache__/
 # Go 编译产物
 server/fleet/fleet-hub
 
+# 运行期数据（地图仓库/索引，车端上报产物）
+data/
+
 # Python 虚拟环境
 .venv/
 __pycache__/

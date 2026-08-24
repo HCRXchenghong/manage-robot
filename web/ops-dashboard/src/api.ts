@@ -1,6 +1,15 @@
 // 数据层：REST + WebSocket + 断网降级（计划任务 4：连不上自动用 mock）。
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { EventSnap, FleetSnap, PointCloudResp } from "./types";
+import type {
+  APIKey,
+  AuditEntry,
+  EventSnap,
+  FleetSnap,
+  MapEntry,
+  NavPoint,
+  NavRoute,
+  PointCloudResp,
+} from "./types";
 import { mockFleet, tickMock } from "./mock";
 
 export type FleetSource = "live" | "mock";
@@ -135,4 +144,108 @@ export function useFleet(): FleetState {
   }, [pullFull]);
 
   return { snap, source, wsConnected, refresh };
+}
+
+// ---------- 地图中心 ----------
+
+export async function fetchMaps(): Promise<MapEntry[]> {
+  const r = await fetchJSON<{ maps: MapEntry[] }>("/api/maps", undefined, 8000);
+  return r.maps || [];
+}
+
+export function mapFileURL(id: string, name: string, version?: number): string {
+  const v = version ? "&v=" + version : "";
+  return "/api/maps/" + encodeURIComponent(id) + "/file?name=" + encodeURIComponent(name) + v;
+}
+
+export async function uploadMap(vehicleId: string, file: File, source: string): Promise<{ changed: boolean }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(String(rd.result));
+    rd.onerror = () => reject(new Error("读文件失败"));
+    rd.readAsDataURL(file);
+  });
+  const base64 = dataUrl.split(",")[1] || "";
+  const resp = await fetchJSON<{ ok: boolean; changed: boolean }>("/api/maps/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      vehicle_id: vehicleId,
+      name: file.name,
+      source: source,
+      author: "admin",
+      data_base64: base64,
+    }),
+  }, 30000);
+  return { changed: resp.changed };
+}
+
+export async function convertMap(id: string): Promise<void> {
+  await fetchJSON("/api/maps/" + encodeURIComponent(id) + "/convert", { method: "POST" }, 60000);
+}
+
+export async function saveMapEdit(id: string, pngBase64: string, ops: unknown): Promise<void> {
+  await fetchJSON("/api/maps/" + encodeURIComponent(id) + "/edit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ author: "admin", png_base64: pngBase64, ops: ops }),
+  }, 30000);
+}
+
+// ---------- 系统配置 ----------
+
+export async function fetchConfig(): Promise<Record<string, unknown>> {
+  return fetchJSON<Record<string, unknown>>("/api/config");
+}
+
+export async function saveConfig(kv: Record<string, unknown>): Promise<void> {
+  await fetchJSON("/api/config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(kv),
+  });
+}
+
+// ---------- 循迹导航 ----------
+
+export async function fetchRoutes(): Promise<NavRoute[]> {
+  const r = await fetchJSON<{ routes: NavRoute[] }>("/api/nav/routes");
+  return r.routes || [];
+}
+
+export async function submitRoute(vehicleId: string, name: string, points: NavPoint[]): Promise<NavRoute> {
+  const r = await fetchJSON<{ ok: boolean; route: NavRoute }>("/api/nav/routes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vehicle_id: vehicleId, name: name, points: points }),
+  });
+  return r.route;
+}
+
+export async function cancelRoute(id: string): Promise<void> {
+  await fetchJSON("/api/nav/routes/" + encodeURIComponent(id) + "/cancel", { method: "POST" });
+}
+
+// ---------- 开放 API 管理 ----------
+
+export async function fetchKeys(): Promise<APIKey[]> {
+  const r = await fetchJSON<{ keys: APIKey[] }>("/api/openkeys");
+  return r.keys || [];
+}
+
+export async function createKey(name: string): Promise<{ key: APIKey; secret: string }> {
+  return fetchJSON<{ key: APIKey; secret: string }>("/api/openkeys", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: name }),
+  });
+}
+
+export async function revokeKey(id: string): Promise<void> {
+  await fetchJSON("/api/openkeys/" + encodeURIComponent(id) + "/revoke", { method: "POST" });
+}
+
+export async function fetchAudit(limit = 100): Promise<AuditEntry[]> {
+  const r = await fetchJSON<{ audit: AuditEntry[] }>("/api/audit?limit=" + limit);
+  return r.audit || [];
 }

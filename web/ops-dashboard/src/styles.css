@@ -233,3 +233,79 @@ select.input { appearance: auto; }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: #24345a; border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
+
+/* ===== 地图中心 ===== */
+.map-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.map-card { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.map-thumb {
+  width: 100%; height: 150px; object-fit: contain;
+  background: #fff; border-radius: 6px; border: 1px solid var(--border);
+}
+.map-thumb.placeholder {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-soft); color: var(--text-dim); font-size: 12px; text-align: center; padding: 12px;
+}
+.map-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 11px; color: var(--text-dim); }
+.badge {
+  font-size: 10px; padding: 2px 8px; border-radius: 99px;
+  border: 1px solid var(--border); color: var(--text-dim); white-space: nowrap;
+}
+.badge.kind-3d_pcd, .badge.kind-3d_csv { border-color: #1d4ed8; color: #93c5fd; background: rgba(29,78,216,.15); }
+.badge.kind-2d_png { border-color: #15803d; color: #86efac; background: rgba(21,128,61,.15); }
+.map-versions summary { cursor: pointer; color: var(--text-dim); font-size: 11px; }
+.ver-row { display: flex; gap: 8px; font-size: 11px; padding: 4px 0; border-top: 1px dashed #1a2745; }
+.notice {
+  background: rgba(56,189,248,.08); border: 1px solid #155e75; color: #a5f3fc;
+  padding: 8px 12px; border-radius: 8px; font-size: 12px; margin-bottom: 10px;
+}
+
+/* ===== 弹窗（系统配置） ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(4,8,18,.66);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.5);
+}
+.settings-modal { width: min(860px, 92vw); height: min(560px, 86vh); display: flex; flex-direction: column; }
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--border);
+}
+.settings-body { display: flex; flex: 1; min-height: 0; }
+.settings-cats {
+  width: 150px; flex: 0 0 auto; border-right: 1px solid var(--border);
+  padding: 10px 8px; display: flex; flex-direction: column; gap: 4px;
+}
+.settings-cat {
+  text-align: left; padding: 9px 12px; border-radius: 8px; border: none;
+  background: transparent; color: var(--text-dim); cursor: pointer; font-size: 13px;
+}
+.settings-cat:hover { background: var(--panel-2); color: var(--text); }
+.settings-cat.active { background: #14325a; color: var(--text); }
+.settings-fields { flex: 1; overflow: auto; padding: 14px 18px; }
+.settings-field {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 10px 0; border-bottom: 1px solid #16223f;
+}
+
+/* ===== 管理员小弹窗 ===== */
+.user-menu {
+  position: absolute; bottom: calc(100% + 6px); left: 0; min-width: 140px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 40;
+  box-shadow: 0 10px 30px rgba(0,0,0,.45);
+}
+.user-menu button {
+  text-align: left; padding: 8px 10px; border-radius: 7px; border: none;
+  background: transparent; color: var(--text); cursor: pointer; font-size: 13px;
+}
+.user-menu button:hover { background: #1b2a4a; }
+
+/* ===== API 平台 ===== */
+.code-box {
+  background: #05080f; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; font-size: 11px; line-height: 1.7; overflow: auto;
+  color: #9fd3ff; white-space: pre; margin: 6px 0 0;
+}

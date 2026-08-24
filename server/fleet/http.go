@@ -24,7 +24,15 @@ import (
 //go:embed all:web/dist
 var webDist embed.FS
 
-func buildHandler(st *State, hub *Hub, pc *pointCloudGen) http.Handler {
+// Services 聚合第 10 步之后新增的后端模块（地图/配置/循迹/开放 API）。
+type Services struct {
+	maps *MapStore
+	cfg  *ConfigStore
+	nav  *NavStore
+	open *OpenAPI
+}
+
+func buildHandler(st *State, hub *Hub, pc *pointCloudGen, svc *Services) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/fleet", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, st.Snapshot())
@@ -96,6 +104,11 @@ func buildHandler(st *State, hub *Hub, pc *pointCloudGen) http.Handler {
 	mux.HandleFunc("GET /debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("GET /debug/pprof/trace", pprof.Trace)
 
+	registerMapRoutes(mux, svc)
+	registerConfigRoutes(mux, svc)
+	registerNavRoutes(mux, svc)
+	registerOpenAPIRoutes(mux, svc)
+
 	mux.Handle("/", spaHandler())
 	return withCORS(mux)
 }
@@ -107,7 +120,8 @@ func withCORS(next http.Handler) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Allow-Headers",
+				"Content-Type, Authorization, X-API-Key, X-Signature, X-Timestamp, X-Nonce")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

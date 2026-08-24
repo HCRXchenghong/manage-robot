@@ -50,6 +50,7 @@ func startMQTT(o mqttOptions, st *State) error {
 		SetOrderMatters(false). // 回调互不阻塞（paho 推荐配置）
 		SetKeepAlive(15 * time.Second)
 	opts.OnConnect = func(c mqtt.Client) {
+		st.SetMQTTPub(c) // 开放下行发布（循迹导航等）
 		if t := c.Subscribe("vehicle/#", 1, nil); t.Wait() && t.Error() != nil {
 			log.Printf("MQTT 订阅 vehicle/# 失败: %v", t.Error())
 			return
