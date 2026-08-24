@@ -21,8 +21,7 @@ export type PageId =
 const NAV: { id: PageId; icon: string; label: string }[] = [
   { id: "overview", icon: "▦", label: "总览大屏" },
   { id: "vehicles", icon: "▤", label: "车辆列表" },
-  { id: "detail", icon: "◉", label: "车辆详情" },
-  { id: "drive", icon: "✥", label: "远程驾驶 · 接管" },
+  { id: "drive", icon: "✥", label: "远程接管" },
   { id: "video", icon: "▶", label: "视频监控" },
   { id: "alerts", icon: "⚠", label: "告警与事件" },
   { id: "terminal", icon: ">_", label: "远程终端" },

@@ -269,6 +269,9 @@ def main():
     ap.add_argument("--cert", default="deploy/pki/dev/vehicle.crt")
     ap.add_argument("--key", default="deploy/pki/dev/vehicle.key")
     ap.add_argument("--vehicle-id", default="sim-veh-001")
+    ap.add_argument("--chassis", default="ackermann",
+                    choices=["ackermann", "4w4s", "diff_agv"],
+                    help="底盘类型：阿克曼 / 四轮四转 / 差速AGV")
     args = ap.parse_args()
 
     gw = Gateway(args)
@@ -280,6 +283,7 @@ def main():
             "gateway_version": "0.1.0-sim",
             "stack": "AUTONOMY_STACK_ROS1",
             "stack_version": "ROS 1 Noetic",
+            "chassis_type": args.chassis,
             "supported_control_modes": ["CONTROL_MODE_TARGET_MOTION"],
             "topic_mapping_version": "ros1-map-v0.1",
             "modems": [{"modem_id": "sim-a", "carrier": "carrier-A"},

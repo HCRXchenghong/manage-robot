@@ -49,6 +49,7 @@ type VehicleSnap struct {
 	Voltage           float64           `json:"voltage"`
 	Gear              string            `json:"gear"`
 	SteerRad          float64           `json:"steer_rad"`
+	WheelSpeeds       []float64         `json:"wheel_speeds"`
 	SpeedHistory      []float64         `json:"speed_history"`
 	Capabilities      map[string]string `json:"capabilities"`
 	Pose              Pose              `json:"pose"`
@@ -94,6 +95,7 @@ type vehicleState struct {
 	voltage      float64
 	gear         string
 	steerRad     float64
+	wheelSpeeds  [4]float64
 	speedHist    []float64
 	capabilities map[string]string
 	lastSampleAt time.Time // 上次入库时刻（抽稀用）
@@ -199,6 +201,22 @@ func (s *State) HandleTelemetry(id string, sigs []signalVal) {
 		case "Vehicle.Chassis.SteeringWheel.Angle":
 			if sg.Num != nil {
 				v.steerRad = *sg.Num
+			}
+		case "Vehicle.Chassis.WheelSpeeds.FL":
+			if sg.Num != nil {
+				v.wheelSpeeds[0] = *sg.Num
+			}
+		case "Vehicle.Chassis.WheelSpeeds.FR":
+			if sg.Num != nil {
+				v.wheelSpeeds[1] = *sg.Num
+			}
+		case "Vehicle.Chassis.WheelSpeeds.RL":
+			if sg.Num != nil {
+				v.wheelSpeeds[2] = *sg.Num
+			}
+		case "Vehicle.Chassis.WheelSpeeds.RR":
+			if sg.Num != nil {
+				v.wheelSpeeds[3] = *sg.Num
 			}
 		case "Vehicle.Powertrain.Transmission.CurrentGear":
 			if sg.Text != nil {
@@ -386,6 +404,7 @@ func (s *State) Snapshot() FleetSnap {
 			Voltage:           round2(v.voltage),
 			Gear:              v.gear,
 			SteerRad:          round2(v.steerRad),
+			WheelSpeeds:       []float64{round2(v.wheelSpeeds[0]), round2(v.wheelSpeeds[1]), round2(v.wheelSpeeds[2]), round2(v.wheelSpeeds[3])},
 			SpeedHistory:      append([]float64(nil), v.speedHist...),
 			Capabilities:      copyMap(v.capabilities),
 			Pose:              poseFor(v.id),

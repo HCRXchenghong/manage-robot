@@ -114,6 +114,13 @@ class VehicleSide:
             bat = {"capacity": 85.0, "voltage": 52.3}
             signals = adapter.translate_vehicle_status(vs, ts) + \
                 adapter.translate_battery(bat, ts)
+            # 底盘轮速信号（远程接管页轮速图用）；差速/四轮四转由车型决定分布
+            ws = self.arb.speed
+            for w in ("FL", "FR", "RL", "RR"):
+                signals.append({"path": "Vehicle.Chassis.WheelSpeeds." + w,
+                                "value": {"number": round(ws, 6)},
+                                "sample_monotonic_ns": ts,
+                                "quality": "SIGNAL_QUALITY_GOOD"})
             # 第 10 步：让大屏看到仲裁器真实状态
             # （arb.mode ∈ autonomous/remote_control/minimum_risk/stopped）
             for s in signals:

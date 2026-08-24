@@ -1,0 +1,31 @@
+/* 远程接管驾驶舱布局 */
+.cockpit {
+  display: grid;
+  grid-template-columns: 1.7fr 1fr;
+  grid-template-rows: 1.05fr 1fr 0.9fr;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.ck-video { grid-column: 1; grid-row: 1; min-height: 0; display: flex; flex-direction: column; }
+.ck-right { grid-column: 2; grid-row: 1 / 3; overflow: auto; min-height: 0; }
+.ck-lidar { grid-column: 1; grid-row: 2; min-height: 0; display: flex; flex-direction: column; }
+.ck-map { grid-column: 1 / 3; grid-row: 3; min-height: 0; display: flex; flex-direction: column; }
+
+.video-wall { display: grid; gap: 6px; flex: 1; min-height: 0; }
+.video-wall.l1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.video-wall.l2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+.video-wall.l4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+.vw-card { position: relative; background: #05080f; border: 1px solid #1c2a44; border-radius: 6px; overflow: hidden; min-height: 0; }
+.vw-card canvas { width: 100%; height: 100%; display: block; object-fit: cover; }
+.vw-label { position: absolute; top: 6px; left: 8px; font-size: 11px; color: #9fd3ff; background: rgba(5, 8, 15, 0.65); padding: 2px 6px; border-radius: 4px; }
+.vw-live { position: absolute; top: 6px; right: 8px; font-size: 10px; color: #22c55e; background: rgba(5, 8, 15, 0.65); padding: 2px 6px; border-radius: 4px; }
+
+.chassis-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.wheel-card { text-align: center; border: 1px solid #1c2a44; border-radius: 6px; padding: 8px 4px; background: #0a1220; }
+.wheel { width: 18px; height: 34px; border: 2px solid #38bdf8; border-radius: 5px; margin: 0 auto 6px; }
+
+.tianmap-box { flex: 1; min-height: 120px; border-radius: 6px; overflow: hidden; background: #0a1220; }
+.veh-divicon { background: transparent; border: none; }
+.veh-arrow { color: #22c55e; font-size: 18px; text-align: center; line-height: 22px; text-shadow: 0 0 6px #000; }
+

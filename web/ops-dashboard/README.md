@@ -2,7 +2,7 @@
 
 React 19 + TypeScript + Vite；three + @react-three/fiber 做 3D 点云；
 xterm 做远程终端。运行时依赖严格白名单：
-react / react-dom / three / @react-three/fiber / @xterm/* / vite / typescript。
+react / react-dom / three / @react-three/fiber / @xterm/* / leaflet / vite / typescript。
 无 CDN、无外链运行时资源；build 产物被 Go embed（server/fleet），单二进制交付。
 
 ## 运行
@@ -50,6 +50,14 @@ react / react-dom / three / @react-three/fiber / @xterm/* / vite / typescript。
 PGM + YAML（ROS map_server 格式，车端导航栈可直接用）。实施计划见 docs/plan-map-engine.md。
 
 ## 控制按钮
+
+## 远程接管驾驶舱
+
+左上视频墙（1/2/4 画面切换，含前/后/左/右机位 + 融合鸟瞰 BEV + 360° 环视；
+阶段 1 模拟画面，阶段 2 换 WebRTC 真流）；左中点云；底部地图走天地图 WMTS
+（配置 tk 后启用，未配置降级 OSM 演示），车辆按遥测坐标落图留轨迹；
+右上接管卡（状态/驾驶员/租约/fencing）+ 底盘卡（轮速/转向/电量/底盘类型：
+阿克曼 / 四轮四转 / 差速AGV）；最右上切换控制车辆。
 
 申请接管 / 续租 / 交还控制权 走 fleet-hub -> control-authority（租约 + fencing）；
 紧急停车为红色二次确认（3 秒内再点执行），指令被车端接受即刻出 critical 事件。

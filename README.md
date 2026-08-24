@@ -47,7 +47,9 @@
 - [x] 第 8 步：控制权服务（接管审批 + 租约 + fencing；无授权动不了车、顶替/到期自动收回、租约断则车自停）
 - [x] 第 9 步：远程终端 workspace（令牌门禁 + 持久 PTY 会话 + 危险命令拦截 + 全审计 + 断线重连回放；验收 6/6）
 - [x] 第 10 步：运营大屏（React 前端 + Go fleet-hub + PostgreSQL + nginx/WAF 一期；激光雷达 2D/3D 点云地图、多车同屏；支持加载真实激光雷达扫描：PCD→CSV 转换 + 自动取景）
- - [x] map-engine 阶段 1：自动 3D→2D（BEV 占据网格 + 导出 ROS map_server 三件套）；总体计划见 docs/plan-map-engine.md
+- [x] map-engine 阶段 1：自动 3D→2D（BEV 占据网格 + 导出 ROS map_server 三件套）；总体计划见 docs/plan-map-engine.md
+ - [x] 多栈点云导入工具 deploy/demo/map_import.py（ROS1/ROS2 bag、PCD、CSV、Livox CustomMsg、LaserScan；老旧 bag 线性扫描恢复）
+ - [x] 远程接管驾驶舱 v1：视频墙 1/2/4（含 BEV/360°）+ 点云 + 天地图底图 + 底盘轮速/转向/电量/车型 + 车辆切换
 
 ## 基本原则（摘自架构文档）
 

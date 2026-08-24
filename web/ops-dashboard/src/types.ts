@@ -16,6 +16,7 @@ export interface VehicleSnap {
   voltage: number;
   gear: string;
   steer_rad: number;
+  wheel_speeds?: number[] | null;
   speed_history: number[] | null;
   capabilities: Record<string, string>;
   pose: Pose;
