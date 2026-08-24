@@ -1,8 +1,12 @@
+// 总览大屏：顶部统计+工具条；中部三栏——左翼（车辆列表/告警与事件）、
+// 中间 2D/3D 地图、右翼（详情/接管/终端）。两翼整列可收起成细竖条，
+// 翼内每张卡片也可单独收起；收起后空间全部让给中间地图。
 import { useRef, useState } from "react";
 import type { FleetState } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
 import StatCards from "../components/StatCards";
 import CollapsePanel from "../components/CollapsePanel";
+import SideCol from "../components/SideCol";
 import LidarView from "../components/LidarView";
 import VehicleTable from "../components/VehicleTable";
 import EventFeed from "../components/EventFeed";
@@ -45,23 +49,21 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
           数据源：{fleet.source === "live" ? "fleet-hub 实时" : "离线演示（mock）"} · 1Hz 推送
         </span>
       </div>
-      <div className="panel overview-map">
-        <LidarView snap={view} selectedId={selected ? selected.vehicle_id : null} onSelect={(id) => onSelect(id, false)} />
-      </div>
-      <div className="overview-cols">
-        <div className="col">
+      <div className="overview-main">
+        <SideCol id="left" label="车辆列表 / 告警事件">
           <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
             <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
           </CollapsePanel>
           <EventFeed events={view.events} compact />
+        </SideCol>
+        <div className="panel overview-map">
+          <LidarView snap={view} selectedId={selected ? selected.vehicle_id : null} onSelect={(id) => onSelect(id, false)} />
         </div>
-        <div className="col">
+        <SideCol id="right" label="详情 / 接管 / 终端">
           <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
-        </div>
-        <div className="col">
           <TakeoverPanel snap={view} />
           <TerminalPanel vehicle={selected} />
-        </div>
+        </SideCol>
       </div>
     </div>
   );
