@@ -5,6 +5,8 @@
 //  - 数据源可配置：默认 /api/pointcloud；「配置点云」可本地加载
 //    JSON/CSV（每行 x,y,z[,intensity]），替换静态场景、保留车辆
 //    加载自定义地图后相机自动取景（包围盒居中），静态点按高度渐变着色
+//  - 自动 3D→2D：BEV 高度切片投影生成占据网格（bev.ts，做法对齐 octomap_server），
+//    可导出 ROS map_server 三件套（PNG + PGM + YAML）
 //  - THREE.Points + BufferGeometry；超过 10 万点自动降采样
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -13,6 +15,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { FleetSnap, PointCloudResp, Pose } from "../types";
 import { fetchPointCloud } from "../api";
 import { vehicleStatusOf } from "./VehicleTable";
+import { bevColor, buildBev } from "./bev";
 
 type ViewMode = "2d" | "3d";
 
@@ -180,6 +183,8 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
   const [customStatic, setCustomStatic] = useState<{ positions: number[]; label: string } | null>(null);
   const [error, setError] = useState("");
   const [rigKey, setRigKey] = useState(0);
+  const [gridOn, setGridOn] = useState(true);
+  const [cellSize, setCellSize] = useState(0.2);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(() => {
@@ -226,6 +231,59 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
     }
     return { center, radius };
   }, [customStatic]);
+
+  // 自动 3D→2D：当前点云投影为 BEV 占据网格（做法见 bev.ts）
+  const bev = useMemo(() => {
+    const src = customStatic ? customStatic.positions : cloud ? cloud.static.positions : null;
+    if (!src || src.length < 3) return null;
+    return buildBev(src, cellSize);
+  }, [cloud, customStatic, cellSize]);
+
+  const gridTexture = useMemo(() => {
+    if (!bev) return null;
+    const canvas = document.createElement("canvas");
+    canvas.width = bev.nx;
+    canvas.height = bev.ny;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    const img = ctx.createImageData(bev.nx, bev.ny);
+    const span = Math.max(1e-6, bev.z1 - bev.z0);
+    for (let iy = 0; iy < bev.ny; iy++) {
+      for (let ix = 0; ix < bev.nx; ix++) {
+        const idx = iy * bev.nx + ix;
+        const p = idx * 4;
+        if (bev.occ[idx]) {
+          const t = Math.min(1, Math.max(0, (bev.maxz[idx] - bev.z0) / span));
+          const rgb = bevColor(t);
+          img.data[p] = Math.round(rgb[0] * 255);
+          img.data[p + 1] = Math.round(rgb[1] * 255);
+          img.data[p + 2] = Math.round(rgb[2] * 255);
+          img.data[p + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.magFilter = THREE.NearestFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    return tex;
+  }, [bev]);
+
+  useEffect(() => {
+    return () => {
+      gridTexture?.dispose();
+    };
+  }, [gridTexture]);
+
+  // 2D 取景：缩放到「占据区域」包围盒，避免稀疏离群点把网格衬得看不见
+  const fitOcc = useMemo(() => {
+    if (!bev || bev.occupiedCells === 0) return null;
+    const center = new THREE.Vector3((bev.fx0 + bev.fx1) / 2, 0, (bev.fy0 + bev.fy1) / 2);
+    const radius = Math.max(6, (Math.hypot(bev.fx1 - bev.fx0, bev.fy1 - bev.fy0) / 2) * 1.1);
+    return { center, radius };
+  }, [bev]);
+
+  const fit = mode === "2d" && fitOcc ? fitOcc : viewFit;
 
   const vehicleGeos = useMemo(() => {
     if (!cloud) return [];
@@ -297,6 +355,65 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
 
   const selectedVehicle = snap.vehicles.find((v) => v.vehicle_id === selectedId) || null;
 
+  // 导出 ROS map_server 三件套：PNG（人看）+ PGM + YAML（车端导航栈直接吃）
+  const exportBev = () => {
+    if (!bev) return;
+    const base =
+      (customStatic ? customStatic.label.replace(/\.[^.]+$/, "") : "synthetic-map") + "-bev";
+    const S = 4;
+    const canvas = document.createElement("canvas");
+    canvas.width = bev.nx * S;
+    canvas.height = bev.ny * S;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.fillStyle = "#0b1220";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const span = Math.max(1e-6, bev.z1 - bev.z0);
+    for (let iy = 0; iy < bev.ny; iy++) {
+      for (let ix = 0; ix < bev.nx; ix++) {
+        const idx = iy * bev.nx + ix;
+        if (!bev.occ[idx]) continue;
+        const t = Math.min(1, Math.max(0, (bev.maxz[idx] - bev.z0) / span));
+        const rgb = bevColor(t);
+        ctx.fillStyle =
+          "rgb(" +
+          Math.round(rgb[0] * 255) +
+          "," +
+          Math.round(rgb[1] * 255) +
+          "," +
+          Math.round(rgb[2] * 255) +
+          ")";
+        ctx.fillRect(ix * S, iy * S, S, S);
+      }
+    }
+    const dl = (name: string, blob: Blob) => {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    };
+    canvas.toBlob((b) => {
+      if (b) dl(base + ".png", b);
+    });
+    // PGM P5（map_server 约定：0=占据 205=未知 254=空闲）
+    const raw = new Uint8Array(bev.nx * bev.ny);
+    for (let i = 0; i < raw.length; i++) raw[i] = bev.occ[i] ? 0 : 205;
+    const header = "P5\n" + bev.nx + " " + bev.ny + "\n255\n";
+    const pgm = new Uint8Array(header.length + raw.length);
+    for (let i = 0; i < header.length; i++) pgm[i] = header.charCodeAt(i);
+    pgm.set(raw, header.length);
+    dl(base + ".pgm", new Blob([pgm.buffer], { type: "image/x-portable-graymap" }));
+    const yaml =
+      "image: " + base + ".pgm\n" +
+      "resolution: " + bev.cell + "\n" +
+      "origin: [" + bev.x0.toFixed(3) + ", " + bev.y0.toFixed(3) + ", 0.000]\n" +
+      "negate: 0\n" +
+      "occupied_thresh: 0.65\n" +
+      "free_thresh: 0.196\n";
+    dl(base + ".yaml", new Blob([yaml], { type: "text/yaml" }));
+  };
+
   return (
     <div className="lidar-wrap">
       <div className="lidar-toolbar">
@@ -310,6 +427,16 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
           视角跟随选中
         </label>
+        <label className="btn small" style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <input type="checkbox" checked={gridOn} onChange={(e) => setGridOn(e.target.checked)} />
+          2D 网格（3D 自动生成）
+        </label>
+        <select className="btn small" value={String(cellSize)} onChange={(e) => setCellSize(Number(e.target.value))}>
+          <option value="0.1">格 0.1m</option>
+          <option value="0.2">格 0.2m</option>
+          <option value="0.5">格 0.5m</option>
+        </select>
+        <button className="btn small" onClick={exportBev} disabled={!bev}>导出 2D 地图</button>
         <span className="spacer" />
         {customStatic && (
           <button className="btn small" onClick={() => setCustomStatic(null)}>
@@ -327,13 +454,13 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
           <ambientLight intensity={0.7} />
           <directionalLight position={[200, 300, 100]} intensity={0.8} />
           <Rig
-            key={mode + ":" + rigKey + ":" + viewFit.radius.toFixed(1)}
+            key={mode + ":" + rigKey + ":" + fit.radius.toFixed(1)}
             mode={mode}
             follow={followVec}
-            center={viewFit.center}
-            radius={viewFit.radius}
+            center={fit.center}
+            radius={fit.radius}
           />
-          {staticGeo && (
+          {staticGeo && !(gridOn && bev && mode === "2d") && (
             <points geometry={staticGeo}>
               <pointsMaterial
                 vertexColors
@@ -343,6 +470,15 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
                 opacity={0.92}
               />
             </points>
+          )}
+          {bev && gridOn && gridTexture && (
+            <mesh
+              rotation={[-Math.PI / 2, 0, 0]}
+              position={[bev.x0 + (bev.nx * bev.cell) / 2, 0.05, bev.y0 + (bev.ny * bev.cell) / 2]}
+            >
+              <planeGeometry args={[bev.nx * bev.cell, bev.ny * bev.cell]} />
+              <meshBasicMaterial map={gridTexture} transparent depthWrite={false} />
+            </mesh>
           )}
           {vehicleGeos.map((vc) => (
             <points key={vc.id} geometry={vc.geo}>
@@ -375,6 +511,9 @@ export default function LidarView({ snap, selectedId, onSelect }: Props) {
         <div className="lidar-hint">
           {mode === "3d" ? "拖拽旋转 · 滚轮缩放 · 点击锥体选车" : "拖拽平移 · 滚轮缩放 · 点击锥体选车"}
           {selectedVehicle ? " · 选中 " + selectedVehicle.vehicle_id : ""}
+          {bev && gridOn
+            ? " · 网格 " + bev.nx + "×" + bev.ny + " · 占据 " + bev.occupiedCells + " · 切片 " + bev.z0.toFixed(1) + "~" + bev.z1.toFixed(1) + "m"
+            : ""}
         </div>
         {error && <div className="lidar-hint" style={{ top: 10, bottom: "auto", color: "#fca5a5" }}>{error}</div>}
       </div>

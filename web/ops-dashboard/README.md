@@ -43,6 +43,12 @@ react / react-dom / three / @react-three/fiber / @xterm/* / vite / typescript。
 再「配置点云」加载生成的 CSV 即可（相机自动取景）。
 效果见 docs/screenshots/real-ndt-map-2d.png / real-ndt-map-3d.png。
 
+## 自动 3D→2D（BEV 网格）
+
+2D 鸟瞰默认显示由 3D 点云自动投影的占据网格（高度切片做法，对齐 ROS octomap_server）；
+格宽 0.1/0.2/0.5m 可选，可勾回原始点云；「导出 2D 地图」下载 PNG（人看）+
+PGM + YAML（ROS map_server 格式，车端导航栈可直接用）。实施计划见 docs/plan-map-engine.md。
+
 ## 控制按钮
 
 申请接管 / 续租 / 交还控制权 走 fleet-hub -> control-authority（租约 + fencing）；
