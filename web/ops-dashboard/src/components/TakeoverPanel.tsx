@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import CollapsePanel from "./CollapsePanel";
 import type { FleetSnap } from "../types";
 import { emergencyStop, takeoverRelease, takeoverRenew, takeoverRequest } from "../api";
 
@@ -57,11 +58,11 @@ export default function TakeoverPanel({ snap, big }: Props) {
   const tk = snap.takeover;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
-      <div className="panel-title">
-        <span>远程驾驶 · 接管</span>
-        <span className="hint">{tk.active ? "接管进行中" : "当前无接管"}</span>
-      </div>
+    <CollapsePanel
+      id="ov-takeover"
+      title="远程驾驶 · 接管"
+      hint={tk.active ? "接管进行中" : "当前无接管"}
+    >
       <div className="kv">
         <span className="k">状态</span>
         <span>{tk.active ? <span className="badge warn">接管中</span> : <span className="badge dim">自动驾驶</span>}</span>
@@ -99,6 +100,6 @@ export default function TakeoverPanel({ snap, big }: Props) {
         {armEstop && <span className="confirm-inline">3 秒内再次点击执行紧急停车</span>}
       </div>
       {msg && <div className="muted mt" style={{ fontSize: 11 }}>{msg}</div>}
-    </div>
+    </CollapsePanel>
   );
 }

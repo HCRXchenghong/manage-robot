@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import CollapsePanel from "./CollapsePanel";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -92,17 +93,17 @@ export default function TerminalPanel({ vehicle }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
-      <div className="panel-title">
-        <span>远程终端 · {vid}</span>
-        <span className="hint">{conn === "open" ? "已连接" : conn === "connecting" ? "连接中…" : "未连接"}</span>
-      </div>
+    <CollapsePanel
+      id="ov-terminal"
+      title={"远程终端 · " + vid}
+      hint={conn === "open" ? "已连接" : conn === "connecting" ? "连接中…" : "未连接"}
+    >
       <div className="term-box" ref={boxRef} />
       <div className="btn-row mt">
         <button className="btn small primary" disabled={conn !== "closed"} onClick={connect}>打开终端</button>
         <button className="btn small" disabled={conn === "closed"} onClick={disconnect}>断开</button>
         <button className="btn small" onClick={() => { disconnect(); window.setTimeout(connect, 200); }}>重连</button>
       </div>
-    </div>
+    </CollapsePanel>
   );
 }

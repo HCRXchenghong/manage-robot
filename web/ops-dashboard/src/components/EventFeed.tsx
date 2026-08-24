@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import CollapsePanel from "./CollapsePanel";
 import type { EventSnap } from "../types";
 
 interface Props {
@@ -41,9 +42,10 @@ export default function EventFeed({ events, compact }: Props) {
   };
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
-      <div className="panel-title">
-        <span>告警与事件{compact ? "" : "（最新在前）"}</span>
+    <CollapsePanel
+      id="ov-events"
+      title={"告警与事件" + (compact ? "" : "（最新在前）")}
+      right={
         <span className="btn-row">
           <select className="input small" value={rangeMin} onChange={(e) => setRangeMin(Number(e.target.value))}>
             <option value={0}>全部时间</option>
@@ -57,7 +59,8 @@ export default function EventFeed({ events, compact }: Props) {
             </button>
           )}
         </span>
-      </div>
+      }
+    >
       <div className="scroll">
         {filtered.length === 0 && <div className="muted" style={{ padding: 10 }}>暂无事件</div>}
         {filtered.map((e) => (
@@ -71,6 +74,6 @@ export default function EventFeed({ events, compact }: Props) {
           </div>
         ))}
       </div>
-    </div>
+    </CollapsePanel>
   );
 }

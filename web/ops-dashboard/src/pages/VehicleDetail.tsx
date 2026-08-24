@@ -1,6 +1,7 @@
 import type { FleetState } from "../api";
 import type { VehicleSnap } from "../types";
 import Sparkline from "../components/Sparkline";
+import CollapsePanel from "../components/CollapsePanel";
 import VideoPanel from "../components/VideoPanel";
 import VehicleTable, { vehicleStatusOf } from "../components/VehicleTable";
 
@@ -28,21 +29,19 @@ interface Props {
 export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Props) {
   if (!vehicle) {
     return (
-      <div className="panel">
-        <div className="panel-title"><span>车辆详情</span></div>
+      <CollapsePanel id="ov-detail" title="车辆详情">
         <VehicleTable snap={fleet.snap} onSelect={onSelect} />
-      </div>
+      </CollapsePanel>
     );
   }
   const v = vehicle;
   const caps = Object.entries(v.capabilities || {});
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12, minHeight: 0, flex: 1 }}>
-      <div className="panel">
-        <div className="panel-title">
-          <span>车辆详情 · {v.vehicle_id}</span>
-          <span className="hint">{STATUS_LABEL[vehicleStatusOf(v)]} · {MODE_LABEL[v.mode] || v.mode || "-"}</span>
-        </div>
+    <CollapsePanel
+      id="ov-detail"
+      title={"车辆详情 · " + v.vehicle_id}
+      hint={STATUS_LABEL[vehicleStatusOf(v)] + " · " + (MODE_LABEL[v.mode] || v.mode || "-")}
+    >
         <div className="kv">
           <span className="k">在线</span><span>{v.online ? "是" : "否（心跳龄 " + v.last_heartbeat_age_s.toFixed(1) + "s）"}</span>
           <span className="k">模式</span><span>{MODE_LABEL[v.mode] || v.mode || "-"}</span>
@@ -66,12 +65,11 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Pro
             </div>
           </>
         )}
-      </div>
       {!compact && (
-        <div className="panel">
+        <div className="panel" style={{ marginTop: 12 }}>
           <VideoPanel vehicle={v} height={200} />
         </div>
       )}
-    </div>
+    </CollapsePanel>
   );
 }

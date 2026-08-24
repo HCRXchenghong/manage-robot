@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type { FleetState } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
 import StatCards from "../components/StatCards";
+import CollapsePanel from "../components/CollapsePanel";
 import LidarView from "../components/LidarView";
 import VehicleTable from "../components/VehicleTable";
 import EventFeed from "../components/EventFeed";
@@ -49,24 +50,17 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
       </div>
       <div className="overview-cols">
         <div className="col">
-          <div className="panel">
-            <div className="panel-title"><span>车辆列表</span><span className="hint">点击选中联动地图</span></div>
+          <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
             <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
-          </div>
-          <div className="panel">
-            <EventFeed events={view.events} compact />
-          </div>
+          </CollapsePanel>
+          <EventFeed events={view.events} compact />
         </div>
         <div className="col">
           <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
         </div>
         <div className="col">
-          <div className="panel">
-            <TakeoverPanel snap={view} />
-          </div>
-          <div className="panel">
-            <TerminalPanel vehicle={selected} />
-          </div>
+          <TakeoverPanel snap={view} />
+          <TerminalPanel vehicle={selected} />
         </div>
       </div>
     </div>
