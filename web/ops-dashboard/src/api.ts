@@ -396,3 +396,60 @@ export async function resetUserPassword(username: string, password: string): Pro
 export async function deleteUser(username: string): Promise<void> {
   await fetchJSON("/api/admin/users/" + encodeURIComponent(username) + "/delete", { method: "POST" });
 }
+
+
+// ---------- 告警与事件成熟化 / 车辆注册 / 孪生模型 ----------
+export interface EventRow {
+  id: number;
+  ts_ns: number;
+  vehicle_id: string;
+  level: string;
+  text: string;
+  group_id: string;
+}
+export interface EventListResp {
+  items: EventRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+export interface EventQuery {
+  page?: number;
+  page_size?: number;
+  level?: string;
+  vehicle?: string;
+  q?: string;
+  from?: string;
+  to?: string;
+}
+export function fetchEvents(q: EventQuery): Promise<EventListResp> {
+  const p = new URLSearchParams();
+  if (q.page) p.set("page", String(q.page));
+  if (q.page_size) p.set("page_size", String(q.page_size));
+  if (q.level && q.level !== "all") p.set("level", q.level);
+  if (q.vehicle && q.vehicle !== "all") p.set("vehicle", q.vehicle);
+  if (q.q) p.set("q", q.q);
+  if (q.from) p.set("from", q.from);
+  if (q.to) p.set("to", q.to);
+  return fetchJSON<EventListResp>("/api/events?" + p.toString(), undefined, 8000);
+}
+export const fetchReadmark = () => fetchJSON<{ read_until_ns: number }>("/api/events/readmark");
+export const postEventsRead = () => controlPost("/api/events/read");
+export const clearEvents = (body: Record<string, unknown>) => controlPost("/api/events/clear", body);
+export const registerVehicle = (body: Record<string, unknown>) => controlPost("/api/vehicles", body);
+export const fetchGroupNames = () =>
+  fetchJSON<{ groups: { id: string; name: string }[] }>("/api/groups");
+
+function bufToB64(buf: ArrayBuffer): string {
+  const u8 = new Uint8Array(buf);
+  let s = "";
+  const CH = 0x8000;
+  for (let i = 0; i < u8.length; i += CH) {
+    s += String.fromCharCode(...u8.subarray(i, i + CH));
+  }
+  return btoa(s);
+}
+export async function uploadVehicleModel(id: string, file: File) {
+  const b64 = bufToB64(await file.arrayBuffer());
+  return controlPost("/api/vehicles/" + encodeURIComponent(id) + "/model", { data: b64 });
+}

@@ -689,3 +689,16 @@ func b64(b []byte) string {
 	}
 	return sb.String()
 }
+// CheckCreds 校验账密（敏感操作二次确认用，如清除日志）：不建会话、不触发锁定计数。
+func (a *AuthStore) CheckCreds(username, pwd string) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	u, ok := a.users[username]
+	if !ok {
+		return "", false
+	}
+	if hashPassword(u.Salt, pwd) != u.PassHash {
+		return "", false
+	}
+	return u.Role, true
+}

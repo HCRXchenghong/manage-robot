@@ -610,3 +610,55 @@ select.input { appearance: auto; }
   padding: 3px 9px; border-radius: 99px; font-size: 12px; color: var(--text);
 }
 .chip input { margin: 0; }
+
+
+/* ---------- 数字孪生独立页 ---------- */
+.twin-root { position: fixed; inset: 0; display: flex; flex-direction: column; background: #05070d; z-index: 5; }
+.twin-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.twin-head h1 { font-size: 15px; margin: 0; }
+.twin-auth { margin: auto; text-align: center; padding: 30px; border: 1px solid var(--border); border-radius: 12px; max-width: 440px; }
+.twin-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 320px 1fr 340px; gap: 10px; padding: 10px; }
+.twin-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; }
+.twin-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: rgba(10,16,30,.6); }
+.twin-card-t { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: var(--text-dim); }
+.twin-dials { display: flex; gap: 8px; justify-content: space-around; }
+.twin-sig { flex: 1; min-height: 120px; display: flex; flex-direction: column; }
+.twin-sig .sig-table-wrap { flex: 1; max-height: none; }
+.twin-term { flex: 1; min-height: 160px; display: flex; flex-direction: column; }
+.twin-term .term-box { flex: 1; min-height: 120px; }
+.twin-center { position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: radial-gradient(800px 500px at 50% 40%, rgba(20,40,70,.5), transparent 70%); }
+.twin-model { position: absolute; inset: 0; }
+.twin-model .model-overlay { position: absolute; inset: 0; pointer-events: none; }
+.twin-model .overlay-corner { position: absolute; width: 22px; height: 22px; border: 2px solid rgba(56,189,248,.6); }
+.twin-model .overlay-corner.top-left { top: 8px; left: 8px; border-right: none; border-bottom: none; }
+.twin-model .overlay-corner.top-right { top: 8px; right: 8px; border-left: none; border-bottom: none; }
+.twin-model .overlay-corner.bottom-left { bottom: 8px; left: 8px; border-right: none; border-top: none; }
+.twin-model .overlay-corner.bottom-right { bottom: 8px; right: 8px; border-left: none; border-top: none; }
+.kv { display: flex; justify-content: space-between; font-size: 11px; padding: 3px 0; color: var(--text-dim); gap: 8px; }
+.kv b { color: var(--text); font-weight: 600; }
+
+/* ---------- 告警与事件（成熟版） ---------- */
+.alerts2-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 8px; }
+.alerts2-toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 0 14px 10px; }
+.alerts2-foot { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--border); }
+.evt-row td { font-size: 12px; }
+tr.group-head td { background: rgba(33,150,243,.08); font-weight: 700; font-size: 12px; padding: 6px 10px; }
+tr.evt-critical td:first-child { box-shadow: inset 3px 0 0 #ef4444; }
+tr.evt-warn td:first-child { box-shadow: inset 3px 0 0 #eab308; }
+
+/* ---------- 表单/消息/归属 ---------- */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.form-grid label.check { flex-direction: row; align-items: center; gap: 6px; grid-column: 1 / -1; }
+.msg { margin-top: 10px; font-size: 12px; }
+.msg.err { color: #f87171; }
+.msg.ok { color: #4ade80; }
+.map-attrib { display: flex; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.badge.dim { background: rgba(107,114,128,.2); color: #9ca3af; }
+.badge.warn { background: rgba(234,179,8,.15); color: #eab308; }
+.btn.danger { background: rgba(239,68,68,.15); color: #f87171; border-color: rgba(239,68,68,.4); }
+
+/* ---------- 总览告警小窗内容变小 ---------- */
+.ov-split .event { padding: 3px 6px; }
+.ov-split .event-text { font-size: 11px; }
+.ov-split .event-time { font-size: 10px; }

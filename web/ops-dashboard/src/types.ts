@@ -16,6 +16,7 @@ export interface GpsSnap {
 export interface VehicleSnap {
   vehicle_id: string;
   group: string;
+  chassis: string;
   online: boolean;
   last_heartbeat_age_s: number;
   mode: string;

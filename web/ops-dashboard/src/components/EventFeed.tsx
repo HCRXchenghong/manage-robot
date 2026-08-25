@@ -7,6 +7,7 @@ interface Props {
   compact?: boolean;
   fixed?: boolean;
   onExpand?: () => void;
+  onMarkRead?: () => void;
 }
 
 function fmtTime(tsNs: number): string {
@@ -29,7 +30,7 @@ export function downloadEventsCSV(events: EventSnap[], filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-export default function EventFeed({ events, compact, fixed, onExpand }: Props) {
+export default function EventFeed({ events, compact, fixed, onExpand, onMarkRead }: Props) {
   const [readSet, setReadSet] = useState<Set<number>>(new Set());
   const [rangeMin, setRangeMin] = useState<number>(0); // 0 = 全部
 
@@ -40,6 +41,10 @@ export default function EventFeed({ events, compact, fixed, onExpand }: Props) {
   }, [events, rangeMin]);
 
   const markAllRead = () => {
+    if (onMarkRead) {
+      onMarkRead();
+      return;
+    }
     setReadSet(new Set(events.map((e) => e.ts_ns)));
   };
 

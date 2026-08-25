@@ -2,12 +2,13 @@
 // 支持手动导入、一行命令 3D→2D、进入独立编辑页。轮询 3s 保持近实时。
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FleetState } from "../api";
-import { convertMap, fetchMaps, mapFileURL, uploadMap } from "../api";
+import { convertMap, fetchGroupNames, fetchMaps, mapFileURL, uploadMap } from "../api";
 import Modal from "../components/Modal";
-import type { MapEntry } from "../types";
+import type { MapEntry, Me } from "../types";
 
 interface Props {
   fleet: FleetState;
+  me: Me;
   onEdit: (mapId: string) => void;
 }
 
@@ -40,8 +41,9 @@ function sourceLabel(s: string): string {
   return s;
 }
 
-export default function Maps({ fleet, onEdit }: Props) {
+export default function Maps({ fleet, me, onEdit }: Props) {
   const [maps, setMaps] = useState<MapEntry[]>([]);
+  const [groupNames, setGroupNames] = useState<Record<string, string>>({});
   const [uploadVid, setUploadVid] = useState("sim-veh-001");
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState("");
@@ -61,6 +63,16 @@ export default function Maps({ fleet, onEdit }: Props) {
     const t = window.setInterval(() => void reload(), 3000); // 车端 15s 上报，3s 轮询即近实时
     return () => window.clearInterval(t);
   }, [reload]);
+
+  useEffect(() => {
+    void fetchGroupNames()
+      .then((r) => {
+        const m: Record<string, string> = {};
+        for (const g of r.groups) m[g.id] = g.name;
+        setGroupNames(m);
+      })
+      .catch(() => setGroupNames({}));
+  }, []);
 
   useEffect(() => {
     const v = fleet.snap.vehicles[0];
@@ -103,6 +115,7 @@ export default function Maps({ fleet, onEdit }: Props) {
           <div style={{ fontSize: 16, fontWeight: 700 }}>地图中心</div>
           <div className="muted">
             每车一张卡片：车端地图实时上报到云端（服务器版本化存储 + 车上原件不动），一行命令 3D→2D，编辑进独立页面
+            {me.role === "super" ? " · 超管可见全部分组地图" : " · 仅显示本分组地图"}
           </div>
         </div>
         <div className="btn-row">
@@ -121,12 +134,23 @@ export default function Maps({ fleet, onEdit }: Props) {
           {maps.map((m) => {
             const latest = m.versions.length ? m.versions[m.versions.length - 1] : null;
             const pngFile = latest ? latest.files.find((f) => f.endsWith(".png")) : undefined;
+            const vehGroup =
+              fleet.snap.vehicles.find((v) => v.vehicle_id === m.vehicle_id)?.group || "";
+            const groupName = vehGroup ? groupNames[vehGroup] || vehGroup : "未挂分组";
+            const uploader =
+              latest && latest.author ? latest.author : m.source === "vehicle_push" ? m.vehicle_id : "平台上传";
             return (
               <div className="panel map-card" key={m.id}>
                 <div className="row" style={{ justifyContent: "space-between" }}>
                   <div>
                     <div style={{ fontWeight: 700 }}>{m.name}</div>
                     <div className="muted">{m.vehicle_id}</div>
+                    <div className="map-attrib">
+                      <span className="badge info">{groupName}</span>
+                      <span className="badge dim">
+                        {m.source === "vehicle_push" ? "车辆同步 · " + m.vehicle_id : "上传 · " + uploader}
+                      </span>
+                    </div>
                   </div>
                   <span className={"badge kind-" + (m.latest_kind || m.kind)}>{kindLabel(m.latest_kind || m.kind)}</span>
                 </div>

@@ -18,6 +18,7 @@ export function mockFleet(): FleetSnap {
   const vehicles: VehicleSnap[] = [
     {
       vehicle_id: "sim-veh-001", online: true, last_heartbeat_age_s: 0.8,
+      group: "g-1", chassis: "阿克曼",
       mode: "autonomous", speed_mps: 1.6, soc: 0.85, voltage: 52.3,
       gear: "D", steer_rad: 0.02, speed_history: seedHistory(1.6),
       throttle_history: seedHistory(30), brake_history: seedHistory(0),
@@ -28,6 +29,7 @@ export function mockFleet(): FleetSnap {
     },
     {
       vehicle_id: "sim-veh-002", online: true, last_heartbeat_age_s: 1.1,
+      group: "g-1", chassis: "四轮四转",
       mode: "autonomous", speed_mps: 0, soc: 0.62, voltage: 49.8,
       gear: "P", steer_rad: 0, speed_history: seedHistory(0),
       throttle_history: seedHistory(0), brake_history: seedHistory(0),
@@ -38,6 +40,7 @@ export function mockFleet(): FleetSnap {
     },
     {
       vehicle_id: "sim-veh-003", online: false, last_heartbeat_age_s: 42,
+      group: "g-2", chassis: "差速AGV",
       mode: "stopped", speed_mps: 0, soc: 0.31, voltage: 46.1,
       gear: "P", steer_rad: 0, speed_history: seedHistory(0),
       throttle_history: seedHistory(0), brake_history: seedHistory(0),

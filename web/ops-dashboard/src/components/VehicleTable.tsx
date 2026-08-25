@@ -28,9 +28,10 @@ interface Props {
   onContext?: (id: string, x: number, y: number) => void;
   selectedId?: string | null;
   compact?: boolean;
+  onConfig?: (id: string) => void;
 }
 
-export default function VehicleTable({ snap, onSelect, onContext, selectedId, compact }: Props) {
+export default function VehicleTable({ snap, onSelect, onContext, selectedId, compact, onConfig }: Props) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"all" | "online" | "offline" | "alert">("all");
 
@@ -66,9 +67,11 @@ export default function VehicleTable({ snap, onSelect, onContext, selectedId, co
               <th>车辆 ID</th>
               <th>状态</th>
               {!compact && <th>模式</th>}
+              {!compact && <th>底盘</th>}
               <th>车速 m/s</th>
               {!compact && <th>电量</th>}
               <th>心跳龄 s</th>
+              {onConfig && <th style={{ textAlign: "right" }}>操作</th>}
             </tr>
           </thead>
           <tbody>
@@ -87,9 +90,23 @@ export default function VehicleTable({ snap, onSelect, onContext, selectedId, co
                   <td>{v.vehicle_id}</td>
                   <td><span className={"badge " + st.cls}>{st.label}</span></td>
                   {!compact && <td>{MODE_LABEL[v.mode] || v.mode || "-"}</td>}
+                  {!compact && <td>{v.chassis || "-"}</td>}
                   <td className="mono">{v.speed_mps.toFixed(2)}</td>
                   {!compact && <td className="mono">{Math.round(v.soc * 100)}%</td>}
                   <td className="mono">{v.last_heartbeat_age_s.toFixed(1)}</td>
+                  {onConfig && (
+                    <td style={{ textAlign: "right" }}>
+                      <button
+                        className="btn small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onConfig(v.vehicle_id);
+                        }}
+                      >
+                        配置
+                      </button>
+                    </td>
+                  )}
                 </tr>
               );
             })}

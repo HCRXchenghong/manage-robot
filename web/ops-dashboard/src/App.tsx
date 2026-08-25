@@ -7,7 +7,6 @@ import NavIcon from "./components/NavIcons";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Vehicles from "./pages/Vehicles";
-import VehicleDetail from "./pages/VehicleDetail";
 import Drive from "./pages/Drive";
 import Video from "./pages/Video";
 import Alerts from "./pages/Alerts";
@@ -17,12 +16,12 @@ import MapEdit from "./pages/MapEdit";
 import NavRoutePage from "./pages/NavRoute";
 import ApiPortal from "./pages/ApiPortal";
 import AdminPage from "./pages/Admin";
+import Twin from "./pages/Twin";
 import type { Me } from "./types";
 
 export type PageId =
   | "overview"
   | "vehicles"
-  | "detail"
   | "drive"
   | "video"
   | "alerts"
@@ -31,7 +30,8 @@ export type PageId =
   | "mapedit"
   | "navroute"
   | "apiportal"
-  | "admin";
+  | "admin"
+  | "twin";
 
 const NAV: { id: PageId; icon: string; label: string; adminOnly?: boolean }[] = [
   { id: "overview", icon: "grid", label: "总览大屏" },
@@ -46,6 +46,27 @@ const NAV: { id: PageId; icon: string; label: string; adminOnly?: boolean }[] = 
   { id: "admin", icon: "users", label: "组织管理", adminOnly: true },
 ];
 
+const PAGE_IDS: PageId[] = ["overview","vehicles","drive","video","alerts","terminal","maps","mapedit","navroute","apiportal","admin","twin"];
+
+// hash 路由：#/页面?参数 —— 刷新不回首页、筛选状态可进 URL（根源修复）。
+export function parseHash(): { page: PageId; params: URLSearchParams } {
+  const h = window.location.hash.replace(/^#\/?/, "");
+  const qi = h.indexOf("?");
+  const path = qi >= 0 ? h.slice(0, qi) : h;
+  const query = qi >= 0 ? h.slice(qi + 1) : "";
+  const segs = path.split("/").filter(Boolean);
+  const first = segs[0] || "overview";
+  const page = (PAGE_IDS as string[]).includes(first) ? (first as PageId) : "overview";
+  const params = new URLSearchParams(query);
+  if (segs[1]) params.set("id", segs.slice(1).join("/"));
+  return { page, params };
+}
+
+export function navTo(page: PageId, params?: Record<string, string>) {
+  const q = params && Object.keys(params).length ? "?" + new URLSearchParams(params).toString() : "";
+  window.location.hash = "#/" + page + q;
+}
+
 const roleLabel = (r: string) =>
   r === "super" ? "超级管理员" : r === "group_admin" ? "管理员" : "用户";
 
@@ -53,9 +74,8 @@ export default function App() {
   const fleet = useFleet(); // hooks 必须无条件调用（登录态判断在其后）
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(true);
-  const [page, setPage] = useState<PageId>("overview");
+  const [route, setRoute] = useState(parseHash);
   const [selected, setSelected] = useState<string>("");
-  const [editMapId, setEditMapId] = useState<string>("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pwdOpen, setPwdOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
@@ -75,6 +95,12 @@ export default function App() {
   }, [navCollapsed]);
 
   useEffect(() => {
+    const onHash = () => setRoute(parseHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
     void fetchMe().then((m) => {
       setMe(m);
       setChecking(false);
@@ -82,6 +108,7 @@ export default function App() {
   }, []);
 
   const isAdmin = me != null && me.role !== "user";
+  const page = route.page;
 
   // 分组过滤：超管全量；其他角色只见本分组车辆（服务端快照同样已过滤，双保险）
   const scopedFleet = useMemo(() => {
@@ -102,7 +129,10 @@ export default function App() {
 
   const selectVehicle = (id: string, goDetail = false) => {
     setSelected(id);
-    if (goDetail) setPage("detail");
+    if (goDetail) {
+      // 车辆详情 = 数字孪生独立页，新标签页打开
+      window.open("#/twin/" + encodeURIComponent(id), "_blank");
+    }
   };
 
   if (checking) {
@@ -121,6 +151,11 @@ export default function App() {
         }}
       />
     );
+  }
+
+  // 数字孪生详情页：独立页面（无侧栏/顶栏），等保鉴权在页内二次校验
+  if (page === "twin") {
+    return <Twin vehicleId={route.params.get("id") || ""} />;
   }
 
   const doLogout = async () => {
@@ -145,7 +180,7 @@ export default function App() {
               <button
                 key={n.id}
                 className={"nav-item" + (page === n.id ? " active" : "")}
-                onClick={() => setPage(n.id)}
+                onClick={() => navTo(n.id)}
                 title={n.label}
               >
                 <span className="nav-icon"><NavIcon name={n.icon} /></span>
@@ -195,28 +230,23 @@ export default function App() {
             <Overview fleet={scopedFleet} selected={selVehicle} onSelect={selectVehicle} />
           )}
           {page === "vehicles" && (
-            <Vehicles fleet={scopedFleet} onSelect={selectVehicle} />
-          )}
-          {page === "detail" && (
-            <VehicleDetail fleet={scopedFleet} vehicle={selVehicle} onSelect={selectVehicle} />
+            <Vehicles fleet={scopedFleet} me={me} onSelect={selectVehicle} />
           )}
           {page === "drive" && (
             <Drive fleet={scopedFleet} vehicle={selVehicle} onSelect={selectVehicle} />
           )}
           {page === "video" && <Video fleet={scopedFleet} vehicle={selVehicle} />}
-          {page === "alerts" && <Alerts fleet={scopedFleet} />}
+          {page === "alerts" && <Alerts me={me} />}
           {page === "terminal" && <Terminal fleet={scopedFleet} vehicle={selVehicle} />}
           {page === "maps" && (
             <Maps
               fleet={scopedFleet}
-              onEdit={(mapId) => {
-                setEditMapId(mapId);
-                setPage("mapedit");
-              }}
+              me={me}
+              onEdit={(mapId) => navTo("mapedit", { id: mapId })}
             />
           )}
           {page === "mapedit" && (
-            <MapEdit mapId={editMapId} onBack={() => setPage("maps")} />
+            <MapEdit mapId={route.params.get("id") || ""} onBack={() => navTo("maps")} />
           )}
           {page === "navroute" && <NavRoutePage fleet={scopedFleet} />}
           {page === "apiportal" && isAdmin && <ApiPortal />}

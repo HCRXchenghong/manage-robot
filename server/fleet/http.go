@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"path"
-	"strconv"
 	"strings"
 )
 
@@ -46,15 +45,6 @@ func buildHandler(st *State, hub *Hub, pc *pointCloudGen, svc *Services) http.Ha
 			return
 		}
 		writeJSON(w, http.StatusOK, v)
-	})
-	mux.HandleFunc("GET /api/events", func(w http.ResponseWriter, r *http.Request) {
-		limit := 50
-		if q := r.URL.Query().Get("limit"); q != "" {
-			if n, err := strconv.Atoi(q); err == nil && n > 0 {
-				limit = n
-			}
-		}
-		writeJSON(w, http.StatusOK, st.Events(limit))
 	})
 	mux.HandleFunc("GET /api/pointcloud", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, pc.generate(st.Snapshot().Vehicles, r.URL.Query().Get("vehicle_id")))
@@ -112,6 +102,7 @@ func buildHandler(st *State, hub *Hub, pc *pointCloudGen, svc *Services) http.Ha
 	registerOpenAPIRoutes(mux, svc)
 	registerAuthRoutes(mux, svc)
 	registerAdminRoutes(mux, svc)
+	registerEventRoutes(mux, svc)
 
 	mux.Handle("/", spaHandler())
 	// 顺序：鉴权（最外）→ 安全头/防索引 → CORS → 路由

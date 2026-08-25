@@ -52,6 +52,7 @@ type GpsSnap struct {
 type VehicleSnap struct {
 	VehicleID         string            `json:"vehicle_id"`
 	Group             string            `json:"group"`
+	Chassis           string            `json:"chassis"`
 	Online            bool              `json:"online"`
 	LastHeartbeatAgeS float64           `json:"last_heartbeat_age_s"`
 	Mode              string            `json:"mode"`
@@ -108,6 +109,7 @@ type signalVal struct {
 type vehicleState struct {
 	id            string
 	group         string
+	chassis       string
 	online        bool
 	lastSeen      time.Time // 最近一次遥测时刻
 	mode          string
@@ -165,6 +167,8 @@ func NewState(hub *Hub, db *sql.DB, authorityAddr string) *State {
 	go s.dbLoop()
 	go s.sweepLoop()
 	go s.broadcastLoop()
+	go s.retentionLoop()
+	s.loadVehiclesFromDB()
 	return s
 }
 
@@ -197,6 +201,10 @@ func (s *State) HandleRegister(id, gatewayID string, caps map[string]string, gro
 	if group != "" {
 		v.group = group
 	}
+	if caps["chassis"] != "" {
+		v.chassis = caps["chassis"]
+	}
+	regGroup, regChassis := v.group, v.chassis
 	for k, val := range caps {
 		if val != "" {
 			v.capabilities[k] = val
@@ -207,8 +215,8 @@ func (s *State) HandleRegister(id, gatewayID string, caps map[string]string, gro
 	s.pushEvent("info", id, fmt.Sprintf("车辆注册（网关 %s，栈 %s）", gatewayID, caps["stack"]))
 	s.submitDB(func(ctx context.Context, db *sql.DB) {
 		if _, err := db.ExecContext(ctx,
-			"INSERT INTO vehicles(id, gateway_id, stack, last_seen) VALUES ($1,$2,$3,now()) ON CONFLICT (id) DO UPDATE SET gateway_id=$2, stack=$3, last_seen=now()",
-			id, gatewayID, caps["stack"]); err != nil {
+			"INSERT INTO vehicles(id, gateway_id, stack, last_seen, group_id, chassis) VALUES ($1,$2,$3,now(),$4,$5) ON CONFLICT (id) DO UPDATE SET gateway_id=$2, stack=$3, last_seen=now(), group_id=COALESCE(NULLIF($4,''), vehicles.group_id), chassis=COALESCE(NULLIF($5,''), vehicles.chassis)",
+			id, gatewayID, caps["stack"], regGroup, regChassis); err != nil {
 			log.Printf("vehicles 入库失败: %v", err)
 		}
 	})
@@ -442,6 +450,12 @@ func (s *State) pollAuthorityOnce() {
 func (s *State) pushEvent(level, vehicleID, txt string) {
 	ev := EventSnap{TsNS: time.Now().UnixNano(), Level: level, VehicleID: vehicleID, Text: txt}
 	s.mu.Lock()
+	evGroup := ""
+	if vehicleID != "" {
+		if vv, ok := s.vehicles[vehicleID]; ok {
+			evGroup = vv.group
+		}
+	}
 	s.events = append([]EventSnap{ev}, s.events...)
 	if len(s.events) > eventRingCap {
 		s.events = s.events[:eventRingCap]
@@ -454,8 +468,8 @@ func (s *State) pushEvent(level, vehicleID, txt string) {
 	}
 	s.submitDB(func(ctx context.Context, db *sql.DB) {
 		if _, err := db.ExecContext(ctx,
-			"INSERT INTO events(ts, vehicle_id, level, text) VALUES ($1,$2,$3,$4)",
-			time.Unix(0, ev.TsNS), nullable(vehicleID), level, txt); err != nil {
+			"INSERT INTO events(ts, vehicle_id, level, text, group_id) VALUES ($1,$2,$3,$4,$5)",
+			time.Unix(0, ev.TsNS), nullable(vehicleID), level, txt, evGroup); err != nil {
 			log.Printf("events 入库失败: %v", err)
 		}
 	})
@@ -482,6 +496,7 @@ func (s *State) Snapshot() FleetSnap {
 		out.Vehicles = append(out.Vehicles, VehicleSnap{
 			VehicleID:         v.id,
 			Group:             v.group,
+			Chassis:           v.chassis,
 			Online:            v.online,
 			LastHeartbeatAgeS: round2(age),
 			Mode:              v.mode,

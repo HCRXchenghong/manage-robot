@@ -4,6 +4,7 @@
 // 地图右侧控制按钮列随右浮层开合联动移位。
 import { useEffect, useRef, useState } from "react";
 import type { FleetState } from "../api";
+import { fetchReadmark, postEventsRead } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
 import CollapsePanel from "../components/CollapsePanel";
 import SideCol from "../components/SideCol";
@@ -129,12 +130,27 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   // 视频监控 / 车辆详情 点击弹窗放大
   const [bigVideo, setBigVideo] = useState(false);
   const [bigDetail, setBigDetail] = useState(false);
+  const [readmarkNs, setReadmarkNs] = useState(0);
   const frozenRef = useRef<FleetSnap | null>(null);
 
   // 自动刷新关闭时冻结画面（仍接收数据，只是不渲染新值）
   if (autoRefresh) frozenRef.current = null;
   else if (!frozenRef.current) frozenRef.current = fleet.snap;
   const view = frozenRef.current || fleet.snap;
+
+  // 总览告警小窗：只展示「已读水位之后的车辆事件」——登录/平台级事件与已读条目不显示
+  useEffect(() => {
+    void fetchReadmark()
+      .then((r) => setReadmarkNs(r.read_until_ns))
+      .catch(() => setReadmarkNs(0));
+  }, []);
+  const feedEvents = view.events.filter((e) => e.vehicle_id && e.ts_ns > readmarkNs);
+  const markRead = () => {
+    void postEventsRead()
+      .then(() => fetchReadmark())
+      .then((r) => setReadmarkNs(r.read_until_ns))
+      .catch(() => undefined);
+  };
 
   // 左侧列表/搜索/右键「定位到车」：选中 + 让地图居中到该车
   const selectAndCenter = (id: string, goDetail?: boolean) => {
@@ -189,7 +205,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
           <TerminalPanel vehicle={selected} fixed onExpand={() => setBigTerminal(true)} />
         </div>
         <div className="ov-click" onClick={openIfPlain(() => setBigEvents(true))}>
-          <EventFeed events={view.events} compact fixed onExpand={() => setBigEvents(true)} />
+          <EventFeed events={feedEvents} compact fixed onExpand={() => setBigEvents(true)} onMarkRead={markRead} />
         </div>
       </div>
     </SideCol>
