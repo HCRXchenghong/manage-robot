@@ -1,7 +1,8 @@
-// 总览大屏：顶部统计+工具条；下方整块 2D/3D 地图，五张卡片以悬浮层
-// 形式叠在地图内部左右两侧（左：车辆列表/告警与事件；右：详情/接管/终端）。
-// 左右浮层整列可收起成细竖条，翼内卡片也可单独收起；收起后地图完整露出。
-import { useRef, useState } from "react";
+// 总览大屏：顶部工具条；下方整块 2D/3D 地图，统计条与五张卡片都以悬浮层
+// 形式放在地图内部（顶：统计条可收起；左：车辆列表/告警与事件；右：详情/接管/终端）。
+// 浮层整列可收起成细竖条，翼内卡片也可单独收起；收起后地图完整露出；
+// 地图右侧控制按钮列随右浮层开合联动移位。
+import { useEffect, useRef, useState } from "react";
 import type { FleetState } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
 import StatCards from "../components/StatCards";
@@ -22,6 +23,31 @@ interface Props {
 
 export default function Overview({ fleet, selected, onSelect }: Props) {
   const [autoRefresh, setAutoRefresh] = useState(true);
+  // 顶部统计条展开/收起（持久化）
+  const [hudOpen, setHudOpen] = useState<boolean>(() => {
+    try {
+      const v = window.localStorage.getItem("ov-stat-open");
+      return v === null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("ov-stat-open", hudOpen ? "1" : "0");
+    } catch {
+      /* 忽略 */
+    }
+  }, [hudOpen]);
+  // 右浮层开合（联动控制按钮列位置）
+  const [rightOpen, setRightOpen] = useState<boolean>(() => {
+    try {
+      const v = window.localStorage.getItem("ov-col-right");
+      return v === null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
   const frozenRef = useRef<FleetSnap | null>(null);
 
   // 自动刷新关闭时冻结画面（仍接收数据，只是不渲染新值）
@@ -29,21 +55,13 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   else if (!frozenRef.current) frozenRef.current = fleet.snap;
   const view = frozenRef.current || fleet.snap;
 
-  const fullscreen = () => {
-    void document.documentElement.requestFullscreen();
-  };
-
   return (
     <div className="overview">
-      <div className="overview-toolbar">
-        <StatCards snap={view} />
-      </div>
       <div className="overview-toolbar">
         <button className={"btn small" + (autoRefresh ? " primary" : "")} onClick={() => setAutoRefresh((a) => !a)}>
           自动刷新 {autoRefresh ? "开" : "关"}
         </button>
         <button className="btn small" onClick={fleet.refresh}>手动刷新</button>
-        <button className="btn small" onClick={fullscreen}>全屏投屏</button>
         <span className="spacer" />
         <span className="muted" style={{ fontSize: 11 }}>
           数据源：{fleet.source === "live" ? "fleet-hub 实时" : "离线演示（mock）"} · 1Hz 推送
@@ -55,6 +73,9 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
             snap={view}
             selectedId={selected ? selected.vehicle_id : null}
             onSelect={(id) => onSelect(id, false)}
+            overlayTop={<StatCards snap={view} open={hudOpen} onOpenChange={setHudOpen} />}
+            hudOpen={hudOpen}
+            toolsRight={rightOpen ? 318 : 52}
             overlayLeft={
               <SideCol id="left" label="车辆列表 / 告警事件">
                 <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
@@ -64,7 +85,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
               </SideCol>
             }
             overlayRight={
-              <SideCol id="right" label="详情 / 接管 / 终端">
+              <SideCol id="right" label="详情 / 接管 / 终端" open={rightOpen} onOpenChange={setRightOpen}>
                 <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
                 <TakeoverPanel snap={view} />
                 <TerminalPanel vehicle={selected} />

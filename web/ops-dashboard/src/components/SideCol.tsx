@@ -7,10 +7,13 @@ interface Props {
   id: string;
   label: string;
   children: ReactNode;
+  // 可选受控模式：父级传 open 时开合由父级决定（总览大屏用来联动地图控制按钮列位置）
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
-export default function SideCol({ id, label, children }: Props) {
-  const [open, setOpen] = useState<boolean>(() => {
+export default function SideCol({ id, label, children, open: openProp, onOpenChange }: Props) {
+  const [inner, setInner] = useState<boolean>(() => {
     try {
       const v = window.localStorage.getItem("ov-col-" + id);
       return v === null ? true : v === "1";
@@ -18,6 +21,11 @@ export default function SideCol({ id, label, children }: Props) {
       return true;
     }
   });
+  const open = openProp ?? inner;
+  const setOpen = (v: boolean) => {
+    setInner(v);
+    if (onOpenChange) onOpenChange(v);
+  };
   useEffect(() => {
     try {
       window.localStorage.setItem("ov-col-" + id, open ? "1" : "0");

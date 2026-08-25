@@ -92,11 +92,13 @@ function Rig({
   follow,
   center,
   radius,
+  controlsRef,
 }: {
   mode: ViewMode;
   follow: THREE.Vector3 | null;
   center: THREE.Vector3;
   radius: number;
+  controlsRef: { current: OrbitControls | null };
 }) {
   const { gl, set, size } = useThree();
   const ref = useRef<OrbitControls | null>(null);
@@ -131,8 +133,10 @@ function Rig({
     c.update();
     set({ camera: cam });
     ref.current = c;
+    controlsRef.current = c;
     return () => {
       ref.current = null;
+      controlsRef.current = null;
       c.dispose();
     };
   }, [mode, gl, set, size.width, size.height, center, radius]);
@@ -177,9 +181,24 @@ interface Props {
   // 地图内悬浮卡片（总览大屏）：左=车辆列表/告警与事件，右=详情/接管/终端
   overlayLeft?: ReactNode;
   overlayRight?: ReactNode;
+  // 顶部统计悬浮条（总览大屏）
+  overlayTop?: ReactNode;
+  // 顶部统计条是否展开（画布加 hud-open 类，让浮层/提示为其让位）
+  hudOpen?: boolean;
+  // 右侧控制按钮列距右缘距离（随右浮层开合联动）
+  toolsRight?: number;
 }
 
-export default function LidarView({ snap, selectedId, onSelect, overlayLeft, overlayRight }: Props) {
+export default function LidarView({
+  snap,
+  selectedId,
+  onSelect,
+  overlayLeft,
+  overlayRight,
+  overlayTop,
+  hudOpen,
+  toolsRight,
+}: Props) {
   const [mode, setMode] = useState<ViewMode>("3d");
   const [pointSize, setPointSize] = useState(2);
   const [follow, setFollow] = useState(false);
@@ -190,6 +209,45 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
   const [gridOn, setGridOn] = useState(true);
   const [cellSize, setCellSize] = useState(0.2);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const [layersOpen, setLayersOpen] = useState(false);
+
+  // 右侧按钮列缩放：透视相机缩放距离，正交相机改 zoom
+  const zoomBy = (f: number) => {
+    const c = controlsRef.current;
+    if (!c) return;
+    const cam = c.object;
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
+      const o = cam as THREE.OrthographicCamera;
+      o.zoom = Math.min(24, Math.max(0.15, o.zoom * f));
+      o.updateProjectionMatrix();
+    } else {
+      const dir = cam.position.clone().sub(c.target).multiplyScalar(1 / f);
+      const len = dir.length();
+      if (len < c.minDistance || len > c.maxDistance) return;
+      cam.position.copy(c.target.clone().add(dir));
+    }
+    c.update();
+  };
+
+  // 居中到选中车辆；无选中则复位视角
+  const recenter = () => {
+    const c = controlsRef.current;
+    const v = snap.vehicles.find((x) => x.vehicle_id === selectedId);
+    if (!c || !v) {
+      setRigKey((k) => k + 1);
+      return;
+    }
+    const delta = new THREE.Vector3(v.pose.x, 0, v.pose.y).sub(c.target);
+    c.target.add(delta);
+    c.object.position.add(delta);
+    c.update();
+  };
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen();
+  };
 
   const load = useCallback(() => {
     fetchPointCloud()
@@ -452,7 +510,7 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
         <button className="btn small" onClick={load}>刷新</button>
         <button className="btn small" onClick={() => setRigKey((k) => k + 1)}>复位视角</button>
       </div>
-      <div className="lidar-canvas">
+      <div className={"lidar-canvas" + (hudOpen ? " hud-open" : hudOpen === false ? " hud-off" : "")}>
         <Canvas dpr={[1, 1.5]} gl={{ antialias: true }}>
           <color attach="background" args={["#060b16"]} />
           <ambientLight intensity={0.7} />
@@ -463,6 +521,7 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
             follow={followVec}
             center={fit.center}
             radius={fit.radius}
+            controlsRef={controlsRef}
           />
           {staticGeo && !(gridOn && bev && mode === "2d") && (
             <points geometry={staticGeo}>
@@ -529,8 +588,34 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
             {error}
           </div>
         )}
+        {overlayTop && <div className="map-overlay top">{overlayTop}</div>}
         {overlayLeft && <div className="map-overlay left">{overlayLeft}</div>}
         {overlayRight && <div className="map-overlay right">{overlayRight}</div>}
+        <div className="map-tools" style={{ right: toolsRight ?? 12 }}>
+          <button className="tool-btn" title="全屏投屏 / 退出" onClick={toggleFullscreen}>⛶</button>
+          <button className="tool-btn" title="居中选中车辆（无选中则复位视角）" onClick={recenter}>◎</button>
+          <button className="tool-btn" title="放大" onClick={() => zoomBy(1.25)}>＋</button>
+          <button className="tool-btn" title="缩小" onClick={() => zoomBy(0.8)}>－</button>
+          <div className="tool-wrap">
+            <button
+              className={"tool-btn" + (layersOpen ? " active" : "")}
+              title="图层"
+              onClick={() => setLayersOpen((o) => !o)}
+            >
+              ▤
+            </button>
+            {layersOpen && (
+              <div className="tool-pop">
+                <label>
+                  <input type="checkbox" checked={gridOn} onChange={(e) => setGridOn(e.target.checked)} /> 2D 网格
+                </label>
+                <label>
+                  <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 视角跟随选中
+                </label>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

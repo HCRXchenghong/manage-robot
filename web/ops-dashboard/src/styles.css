@@ -120,15 +120,36 @@ body {
 .badge.info { color: #bae6fd; border-color: #0c4a6e; background: #082f49; }
 .badge.dim { color: var(--text-dim); }
 
-.stat-cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
-.stat-card {
-  background: linear-gradient(160deg, var(--panel), var(--panel-2));
-  border: 1px solid var(--border); border-radius: 10px;
-  padding: 12px 14px;
+/* 地图内顶部统计悬浮条：无单独卡片边框，细竖线分隔，均匀排开 */
+.stat-strip {
+  display: flex; align-items: stretch; justify-content: space-evenly;
+  flex: 1; max-width: 1000px; position: relative;
+  background: rgba(8, 14, 28, 0.86); backdrop-filter: blur(6px);
+  border: 1px solid rgba(148, 184, 255, 0.08); border-radius: 10px;
+  padding: 8px 40px 8px 8px;
 }
-.stat-label { color: var(--text-dim); font-size: 12px; }
-.stat-value { font-size: 24px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+.stat-item { display: flex; align-items: center; gap: 10px; padding: 2px 18px; }
+.stat-item + .stat-item { border-left: 1px solid rgba(148, 184, 255, 0.12); }
+.stat-ico {
+  width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; flex: 0 0 auto;
+}
+.stat-txt { display: flex; flex-direction: column; line-height: 1.25; }
+.stat-label { color: var(--text-dim); font-size: 11px; }
+.stat-value { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stat-sub { font-size: 10px; color: var(--text-dim); }
+.stat-collapse {
+  position: absolute; right: 8px; top: 8px;
+  background: transparent; border: none; color: var(--text-dim);
+  cursor: pointer; font-size: 12px; padding: 2px 6px; border-radius: 6px;
+}
+.stat-collapse:hover { color: #7cc4ff; }
+.stat-pill {
+  background: rgba(8, 14, 28, 0.86); backdrop-filter: blur(6px);
+  border: 1px solid rgba(148, 184, 255, 0.12); border-radius: 999px;
+  color: var(--text-dim); font-size: 12px; padding: 5px 14px; cursor: pointer;
+}
+.stat-pill:hover { color: #7cc4ff; border-color: #2196f3; }
 
 .table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .table th {
@@ -216,7 +237,44 @@ select.input { appearance: auto; }
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;
 }
 .map-overlay .side-rail { height: 100%; background: rgba(8, 14, 28, 0.85); backdrop-filter: blur(4px); }
-.map-overlay .panel { background: rgba(11, 18, 36, 0.72); }
+.map-overlay.top {
+  left: 10px; right: 10px; top: 10px; bottom: auto; max-width: none;
+  flex-direction: row; justify-content: center; align-items: flex-start;
+  pointer-events: none; z-index: 7;
+}
+.map-overlay.top > * { pointer-events: auto; }
+.lidar-canvas.hud-open .map-overlay.left,
+.lidar-canvas.hud-open .map-overlay.right { top: 80px; }
+.lidar-canvas.hud-open .lidar-hint { top: 80px; }
+.lidar-canvas.hud-off .lidar-hint { top: 44px; }
+/* 浮层内卡片：去掉逐张边框，磨砂底 + 细分隔线分区 */
+.map-overlay .panel { background: transparent; border: none; border-radius: 0; padding: 6px 4px; }
+.map-overlay .panel + .panel { border-top: 1px solid rgba(148, 184, 255, 0.10); }
+.map-overlay .panel-title { margin-bottom: 6px; }
+
+/* 地图内右侧控制按钮列（位置随右浮层开合联动） */
+.map-tools {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 7;
+  display: flex; flex-direction: column; gap: 6px; transition: right 0.2s ease;
+}
+.tool-btn {
+  width: 34px; height: 34px; border-radius: 8px;
+  background: rgba(8, 14, 28, 0.86); backdrop-filter: blur(4px);
+  border: 1px solid rgba(148, 184, 255, 0.15); color: #cfe0f8;
+  cursor: pointer; font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.tool-btn:hover { border-color: #2196f3; color: #7cc4ff; }
+.tool-btn.active { border-color: #2196f3; color: #7cc4ff; }
+.tool-wrap { position: relative; }
+.tool-pop {
+  position: absolute; right: calc(100% + 8px); top: 0;
+  background: rgba(8, 14, 28, 0.92); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px;
+  display: flex; flex-direction: column; gap: 6px;
+  white-space: nowrap; font-size: 12px;
+}
+.tool-pop label { display: flex; gap: 6px; align-items: center; cursor: pointer; }
 
 /* ===== 事件流 ===== */
 .event { display: flex; gap: 8px; padding: 7px 4px; border-bottom: 1px solid #1a2745; align-items: flex-start; }
