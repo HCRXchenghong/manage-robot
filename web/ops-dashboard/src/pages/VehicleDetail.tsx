@@ -93,7 +93,7 @@ export function VehicleDashboard({ v }: { v: VehicleSnap }) {
         </div>
       </div>
       <AccelChart hist={v.accel_history || []} />
-      <SignalTable v={v} />
+      <SignalTable v={v} showSource />
     </div>
   );
 }

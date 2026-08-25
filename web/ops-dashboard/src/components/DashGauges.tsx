@@ -148,8 +148,9 @@ export function AccelChart({ hist, height = 96 }: { hist: number[]; height?: num
   );
 }
 
-// 实时信号表（对齐 1.html 的信号表：信号/数值/单位/来源字段）
-export function SignalTable({ v }: { v: VehicleSnap }) {
+// 实时信号表（对齐 1.html 的信号表：信号/数值/单位[/来源字段]）。
+// 来源字段默认隐藏，仅弹窗详情页（showSource）展示。
+export function SignalTable({ v, showSource }: { v: VehicleSnap; showSource?: boolean }) {
   const rows: [string, string, string, string][] = [
     ["车速", (v.speed_mps * 3.6).toFixed(1), "km/h", "Vehicle.Chassis.Speed"],
     ["纵向加速度", (v.accel_mps2 ?? 0).toFixed(2), "m/s2", "Vehicle.Chassis.Accel.Longitudinal"],
@@ -170,15 +171,20 @@ export function SignalTable({ v }: { v: VehicleSnap }) {
     <div className="sig-table-wrap">
       <table className="sig-table">
         <thead>
-          <tr><th>信号</th><th style={{ textAlign: "right" }}>数值</th><th>单位</th><th>来源字段</th></tr>
+          <tr>
+            <th>信号</th>
+            <th style={{ textAlign: "right" }}>数值</th>
+            <th>单位</th>
+            {showSource && <th>来源字段</th>}
+          </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r[3]}>
+            <tr key={r[3] + r[0]}>
               <td>{r[0]}</td>
               <td className="mono" style={{ textAlign: "right" }}>{r[1]}</td>
               <td>{r[2]}</td>
-              <td className="dim">{r[3]}</td>
+              {showSource && <td className="dim">{r[3]}</td>}
             </tr>
           ))}
         </tbody>

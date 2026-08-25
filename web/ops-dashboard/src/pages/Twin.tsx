@@ -1,11 +1,13 @@
 // 数字孪生车辆详情页：独立页面（无侧栏/顶栏），新标签页打开，等保三级会话鉴权。
-// 布局借鉴桌面「数字孪生」项目：左数据面板 / 中 GLB 模型 / 右视频+终端，全部接真实接口。
+// 布局对齐桌面「数字孪生」参考图：左 数据面板 / 中 GLB 模型 / 右 点云+GPS+视频+终端，全部接真实接口。
 import { useEffect, useState } from "react";
 import { fetchMe, useFleet } from "../api";
 import { BarGauge, DialGauge, SignalTable } from "../components/DashGauges";
 import MiniVideos from "../components/MiniVideos";
 import TerminalPanel from "../components/TerminalPanel";
+import TwinGps from "../components/TwinGps";
 import TwinModel from "../components/TwinModel";
+import TwinRadar from "../components/TwinRadar";
 import type { Me } from "../types";
 
 export default function Twin({ vehicleId }: { vehicleId: string }) {
@@ -82,10 +84,6 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
             <BarGauge label="机内温度" value={v.cabin_temp_c ?? 26} min={0} max={50} unit="°C" color="#f59e0b" />
             <BarGauge label="机内湿度" value={v.cabin_humidity_pct ?? 45} min={0} max={100} unit="%" color="#38bdf8" digits={0} />
           </div>
-          <div className="twin-card twin-dials">
-            <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
-            <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
-          </div>
           <div className="twin-card">
             <div className="twin-card-t">设备状态</div>
             <div className="kv">
@@ -105,6 +103,11 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
               <b className="mono">{v.last_heartbeat_age_s.toFixed(1)} s</b>
             </div>
           </div>
+          <div className="twin-card twin-dials">
+            <div className="twin-card-t" style={{ width: "100%" }}>行驶仪表</div>
+            <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
+            <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
+          </div>
           <div className="twin-card twin-sig">
             <div className="twin-card-t">实时信号表</div>
             <SignalTable v={v} />
@@ -114,6 +117,12 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
           <TwinModel vehicleId={v.vehicle_id} powered={v.online} />
         </main>
         <aside className="twin-col twin-right">
+          <div className="twin-card">
+            <TwinRadar vehicle={v} />
+          </div>
+          <div className="twin-card">
+            <TwinGps vehicle={v} />
+          </div>
           <div className="twin-card">
             <MiniVideos vehicle={v} />
           </div>
