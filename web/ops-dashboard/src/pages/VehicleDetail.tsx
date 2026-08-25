@@ -35,7 +35,6 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Pro
     );
   }
   const v = vehicle;
-  const caps = Object.entries(v.capabilities || {});
   return (
     <CollapsePanel
       id="ov-detail"
@@ -51,22 +50,9 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Pro
           <span className="k">位姿</span><span className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</span>
         </div>
         <div className="muted" style={{ fontSize: 11, margin: "6px 0 4px" }}>
-          油门 / 刹车（油门 {v.throttle_pct.toFixed(0)}% · 刹车 {v.brake_pct.toFixed(0)}%）
+          油门 / 刹车（油门 {(v.throttle_pct || 0).toFixed(0)}% · 刹车 {(v.brake_pct || 0).toFixed(0)}%）
         </div>
         <DualLine a={v.throttle_history || []} b={v.brake_history || []} height={compact ? 70 : 110} />
-        {caps.length > 0 && (
-          <>
-            <div className="muted" style={{ fontSize: 11, margin: "10px 0 6px" }}>能力声明（register retained）</div>
-            <div className="cap-list">
-              {caps.map(([k, val]) => (
-                <div className="cap-item" key={k}>
-                  <div className="cap-key">{k}</div>
-                  <div>{val}</div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
       {!compact && (
         <div className="panel" style={{ marginTop: 12 }}>
           <VideoPanel vehicle={v} height={200} />

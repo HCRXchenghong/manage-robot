@@ -2,7 +2,7 @@
 // 卡片以悬浮层形式放在地图内部（左：车辆列表/告警与事件；右：详情/终端）。
 // 浮层整列可收起成细竖条，翼内卡片也可单独收起；收起后地图完整露出；
 // 地图右侧控制按钮列随右浮层开合联动移位。
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FleetState } from "../api";
 import type { FleetSnap, VehicleSnap } from "../types";
 import CollapsePanel from "../components/CollapsePanel";
@@ -21,7 +21,27 @@ interface Props {
 }
 
 export default function Overview({ fleet, selected, onSelect }: Props) {
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  // 自动刷新在「设置 → 车辆与底盘」配置（默认开），保存后实时生效
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
+    try {
+      const v = window.localStorage.getItem("ov-auto-refresh");
+      return v === null ? true : v === "1";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    const onCfg = () => {
+      try {
+        const v = window.localStorage.getItem("ov-auto-refresh");
+        setAutoRefresh(v === null ? true : v === "1");
+      } catch {
+        /* 忽略 */
+      }
+    };
+    window.addEventListener("ra-cfg-changed", onCfg);
+    return () => window.removeEventListener("ra-cfg-changed", onCfg);
+  }, []);
   // 右浮层开合（联动控制按钮列位置）
   const [rightOpen, setRightOpen] = useState<boolean>(() => {
     try {
@@ -42,7 +62,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
 
   // 左右浮层两种地图视图共用
   const leftOverlay = (
-    <SideCol id="left" label="车辆列表 / 告警事件">
+    <SideCol id="left" side="left" label="车辆列表 / 告警事件">
       <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
         <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
       </CollapsePanel>
@@ -50,7 +70,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
     </SideCol>
   );
   const rightOverlay = (
-    <SideCol id="right" label="详情 / 终端" open={rightOpen} onOpenChange={setRightOpen}>
+    <SideCol id="right" side="right" label="详情 / 终端" open={rightOpen} onOpenChange={setRightOpen}>
       <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
       <TerminalPanel vehicle={selected} />
     </SideCol>
@@ -59,10 +79,6 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   return (
     <div className="overview">
       <div className="overview-toolbar">
-        <button className={"btn small" + (autoRefresh ? " primary" : "")} onClick={() => setAutoRefresh((a) => !a)}>
-          自动刷新 {autoRefresh ? "开" : "关"}
-        </button>
-        <button className="btn small" onClick={fleet.refresh}>手动刷新</button>
         <div className="tabs">
           <button className={"tab" + (mapKind === "lidar" ? " active" : "")} onClick={() => setMapKind("lidar")}>
             点云地图

@@ -42,6 +42,7 @@ const FIELDS: FieldDef[] = [
     { v: "diff_agv", label: "差速 AGV" },
   ] },
   { cat: "vehicle", key: "telemetry_hz", label: "遥测频率 (Hz)", desc: "车端上行遥测频率", kind: "number" },
+  { cat: "vehicle", key: "auto_refresh", label: "总览自动刷新", desc: "关闭后总览画面冻结（仍接收数据，不渲染新值）；默认开启", kind: "switch" },
   { cat: "vehicle", key: "map_push_s", label: "地图上报周期（秒）", desc: "车端地图实时上报间隔（sha256 去重）", kind: "number" },
   { cat: "security", key: "open_api_enabled", label: "开放 API 总开关", desc: "/open/v1/* 对外接口", kind: "switch" },
   { cat: "security", key: "audit_enabled", label: "审计记录", desc: "调用审计（含失败）留存", kind: "switch" },
@@ -64,6 +65,8 @@ export default function SettingsModal({ onClose }: Props) {
         const def = amapCfg();
         if (!c["amap_key"]) c["amap_key"] = window.localStorage.getItem("ra-cfg-amap-key") || def.key;
         if (!c["amap_sec"]) c["amap_sec"] = window.localStorage.getItem("ra-cfg-amap-sec") || def.sec;
+        if (c["auto_refresh"] === undefined)
+          c["auto_refresh"] = (window.localStorage.getItem("ov-auto-refresh") || "1") === "1";
         setCfg(c);
       } catch {
         /* 后端未就绪时用空值 */
@@ -89,6 +92,8 @@ export default function SettingsModal({ onClose }: Props) {
       if (typeof cfg["tdt_origin"] === "string") window.localStorage.setItem("tdt_origin", cfg["tdt_origin"]);
       if (typeof cfg["amap_key"] === "string") window.localStorage.setItem("ra-cfg-amap-key", cfg["amap_key"]);
       if (typeof cfg["amap_sec"] === "string") window.localStorage.setItem("ra-cfg-amap-sec", cfg["amap_sec"]);
+      if (typeof cfg["auto_refresh"] === "boolean")
+        window.localStorage.setItem("ov-auto-refresh", cfg["auto_refresh"] ? "1" : "0");
       // 通知地图组件实时重建（总览 GPS 轨迹等）
       window.dispatchEvent(new CustomEvent("ra-cfg-changed"));
       setSaved("已保存");
