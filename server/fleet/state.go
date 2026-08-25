@@ -41,6 +41,14 @@ type Pose struct {
 	Yaw float64 `json:"yaw"`
 }
 
+// GpsSnap 车端 GPS 定位（WGS-84）；前端负责 GCJ-02 纠偏后上高德底图。
+type GpsSnap struct {
+	Fix bool    `json:"fix"`
+	Lat float64 `json:"lat"`
+	Lon float64 `json:"lon"`
+	Alt float64 `json:"alt"`
+}
+
 type VehicleSnap struct {
 	VehicleID         string            `json:"vehicle_id"`
 	Group             string            `json:"group"`
@@ -54,6 +62,11 @@ type VehicleSnap struct {
 	SteerRad          float64           `json:"steer_rad"`
 	WheelSpeeds       []float64         `json:"wheel_speeds"`
 	SpeedHistory      []float64         `json:"speed_history"`
+	ThrottleHistory   []float64         `json:"throttle_history"`
+	BrakeHistory      []float64         `json:"brake_history"`
+	ThrottlePct       float64           `json:"throttle_pct"`
+	BrakePct          float64           `json:"brake_pct"`
+	Gps               GpsSnap           `json:"gps"`
 	Capabilities      map[string]string `json:"capabilities"`
 	Pose              Pose              `json:"pose"`
 }
@@ -101,6 +114,14 @@ type vehicleState struct {
 	steerRad     float64
 	wheelSpeeds  [4]float64
 	speedHist    []float64
+	throttleHist []float64
+	brakeHist    []float64
+	throttlePct  float64
+	brakePct     float64
+	gpsFix       bool
+	gpsLat       float64
+	gpsLon       float64
+	gpsAlt       float64
 	capabilities map[string]string
 	lastSampleAt time.Time // 上次入库时刻（抽稀用）
 }
@@ -241,6 +262,38 @@ func (s *State) HandleTelemetry(id string, sigs []signalVal) {
 		case "Vehicle.Powertrain.TractionBattery.Voltage":
 			if sg.Num != nil {
 				v.voltage = *sg.Num
+			}
+		case "Vehicle.Chassis.Throttle.Pct":
+			if sg.Num != nil {
+				v.throttlePct = *sg.Num
+				v.throttleHist = append(v.throttleHist, round2(*sg.Num))
+				if len(v.throttleHist) > speedHistCap {
+					v.throttleHist = v.throttleHist[len(v.throttleHist)-speedHistCap:]
+				}
+			}
+		case "Vehicle.Chassis.Brake.Pct":
+			if sg.Num != nil {
+				v.brakePct = *sg.Num
+				v.brakeHist = append(v.brakeHist, round2(*sg.Num))
+				if len(v.brakeHist) > speedHistCap {
+					v.brakeHist = v.brakeHist[len(v.brakeHist)-speedHistCap:]
+				}
+			}
+		case "Vehicle.GPS.Fix":
+			if sg.Num != nil {
+				v.gpsFix = *sg.Num > 0.5
+			}
+		case "Vehicle.GPS.Latitude":
+			if sg.Num != nil {
+				v.gpsLat = *sg.Num
+			}
+		case "Vehicle.GPS.Longitude":
+			if sg.Num != nil {
+				v.gpsLon = *sg.Num
+			}
+		case "Vehicle.GPS.Altitude":
+			if sg.Num != nil {
+				v.gpsAlt = *sg.Num
 			}
 		}
 	}
@@ -415,6 +468,11 @@ func (s *State) Snapshot() FleetSnap {
 			SteerRad:          round2(v.steerRad),
 			WheelSpeeds:       []float64{round2(v.wheelSpeeds[0]), round2(v.wheelSpeeds[1]), round2(v.wheelSpeeds[2]), round2(v.wheelSpeeds[3])},
 			SpeedHistory:      append([]float64(nil), v.speedHist...),
+			ThrottleHistory:   append([]float64(nil), v.throttleHist...),
+			BrakeHistory:      append([]float64(nil), v.brakeHist...),
+			ThrottlePct:       round2(v.throttlePct),
+			BrakePct:          round2(v.brakePct),
+			Gps:               GpsSnap{Fix: v.gpsFix, Lat: round6(v.gpsLat), Lon: round6(v.gpsLon), Alt: round2(v.gpsAlt)},
 			Capabilities:      copyMap(v.capabilities),
 			Pose:              poseFor(v.id),
 		})
@@ -538,6 +596,7 @@ func (s *State) persistLease(tk TakeoverSnap) {
 // ---------- 小工具 ----------
 
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
+func round6(f float64) float64 { return math.Round(f*1e6) / 1e6 }
 
 func nullable(s string) any {
 	if s == "" {

@@ -181,24 +181,11 @@ interface Props {
   // 地图内悬浮卡片（总览大屏）：左=车辆列表/告警与事件，右=详情/接管/终端
   overlayLeft?: ReactNode;
   overlayRight?: ReactNode;
-  // 顶部统计悬浮条（总览大屏）
-  overlayTop?: ReactNode;
-  // 顶部统计条是否展开（画布加 hud-open 类，让浮层/提示为其让位）
-  hudOpen?: boolean;
   // 右侧控制按钮列距右缘距离（随右浮层开合联动）
   toolsRight?: number;
 }
 
-export default function LidarView({
-  snap,
-  selectedId,
-  onSelect,
-  overlayLeft,
-  overlayRight,
-  overlayTop,
-  hudOpen,
-  toolsRight,
-}: Props) {
+export default function LidarView({ snap, selectedId, onSelect, overlayLeft, overlayRight, toolsRight }: Props) {
   const [mode, setMode] = useState<ViewMode>("3d");
   const [pointSize, setPointSize] = useState(2);
   const [follow, setFollow] = useState(false);
@@ -510,7 +497,7 @@ export default function LidarView({
         <button className="btn small" onClick={load}>刷新</button>
         <button className="btn small" onClick={() => setRigKey((k) => k + 1)}>复位视角</button>
       </div>
-      <div className={"lidar-canvas" + (hudOpen ? " hud-open" : hudOpen === false ? " hud-off" : "")}>
+      <div className="lidar-canvas">
         <Canvas dpr={[1, 1.5]} gl={{ antialias: true }}>
           <color attach="background" args={["#060b16"]} />
           <ambientLight intensity={0.7} />
@@ -588,7 +575,6 @@ export default function LidarView({
             {error}
           </div>
         )}
-        {overlayTop && <div className="map-overlay top">{overlayTop}</div>}
         {overlayLeft && <div className="map-overlay left">{overlayLeft}</div>}
         {overlayRight && <div className="map-overlay right">{overlayRight}</div>}
         <div className="map-tools" style={{ right: toolsRight ?? 12 }}>

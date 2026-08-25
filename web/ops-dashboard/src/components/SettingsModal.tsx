@@ -3,6 +3,7 @@
 // 值来源：服务端 /api/config（权威）+ 浏览器本地（天地图 tk 等前端自用项双写）。
 import { useEffect, useState } from "react";
 import { fetchConfig, saveConfig } from "../api";
+import { amapCfg } from "./GpsMap";
 
 interface Props {
   onClose: () => void;
@@ -27,6 +28,8 @@ interface FieldDef {
 const FIELDS: FieldDef[] = [
   { cat: "map", key: "tdt_tk", label: "天地图密钥 (tk)", desc: "驾驶舱/地图底图用；留空自动降级为 OSM 底图", kind: "text" },
   { cat: "map", key: "tdt_origin", label: "坐标原点（纬度,经度）", desc: "车辆本地坐标投射到天地图的锚点", kind: "text" },
+  { cat: "map", key: "amap_key", label: "高德地图 Key", desc: "总览 GPS 轨迹底图（lbs.amap.com，Web端 JS API）；保存后实时生效", kind: "text" },
+  { cat: "map", key: "amap_sec", label: "高德安全密钥", desc: "securityJsCode，与 Key 配套使用", kind: "text" },
   { cat: "map", key: "bev_cell", label: "3D→2D 默认格宽（米）", desc: "map_convert 一行命令的默认栅格分辨率", kind: "number" },
   { cat: "map", key: "maps_dir", label: "地图仓库目录", desc: "服务器侧地图存储位置（版本化）", kind: "readonly" },
   { cat: "service", key: "fleet_addr", label: "fleet-hub 监听地址", desc: "云端聚合服务（REST/WS/静态站）", kind: "readonly" },
@@ -58,6 +61,9 @@ export default function SettingsModal({ onClose }: Props) {
         // 前端自用项优先取本地（比如天地图 tk 之前在大屏页填过）
         const tk = window.localStorage.getItem("tdt_tk");
         if (tk && !c["tdt_tk"]) c["tdt_tk"] = tk;
+        const def = amapCfg();
+        if (!c["amap_key"]) c["amap_key"] = window.localStorage.getItem("ra-cfg-amap-key") || def.key;
+        if (!c["amap_sec"]) c["amap_sec"] = window.localStorage.getItem("ra-cfg-amap-sec") || def.sec;
         setCfg(c);
       } catch {
         /* 后端未就绪时用空值 */
@@ -81,6 +87,10 @@ export default function SettingsModal({ onClose }: Props) {
       // 前端自用项双写本地
       if (typeof cfg["tdt_tk"] === "string") window.localStorage.setItem("tdt_tk", cfg["tdt_tk"]);
       if (typeof cfg["tdt_origin"] === "string") window.localStorage.setItem("tdt_origin", cfg["tdt_origin"]);
+      if (typeof cfg["amap_key"] === "string") window.localStorage.setItem("ra-cfg-amap-key", cfg["amap_key"]);
+      if (typeof cfg["amap_sec"] === "string") window.localStorage.setItem("ra-cfg-amap-sec", cfg["amap_sec"]);
+      // 通知地图组件实时重建（总览 GPS 轨迹等）
+      window.dispatchEvent(new CustomEvent("ra-cfg-changed"));
       setSaved("已保存");
     } catch (e) {
       setSaved("保存失败：" + String(e));

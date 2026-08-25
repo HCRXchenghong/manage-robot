@@ -1,6 +1,6 @@
 import type { FleetState } from "../api";
 import type { VehicleSnap } from "../types";
-import Sparkline from "../components/Sparkline";
+import DualLine from "../components/DualLine";
 import CollapsePanel from "../components/CollapsePanel";
 import VideoPanel from "../components/VideoPanel";
 import VehicleTable, { vehicleStatusOf } from "../components/VehicleTable";
@@ -50,8 +50,10 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Pro
           <span className="k">挡位 / 转向</span><span className="mono">{v.gear || "-"} · {v.steer_rad.toFixed(3)} rad</span>
           <span className="k">位姿</span><span className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</span>
         </div>
-        <div className="muted" style={{ fontSize: 11, margin: "6px 0 4px" }}>车速历史（{(v.speed_history || []).length}/150 点）</div>
-        <Sparkline data={v.speed_history || []} height={compact ? 70 : 110} />
+        <div className="muted" style={{ fontSize: 11, margin: "6px 0 4px" }}>
+          油门 / 刹车（油门 {v.throttle_pct.toFixed(0)}% · 刹车 {v.brake_pct.toFixed(0)}%）
+        </div>
+        <DualLine a={v.throttle_history || []} b={v.brake_history || []} height={compact ? 70 : 110} />
         {caps.length > 0 && (
           <>
             <div className="muted" style={{ fontSize: 11, margin: "10px 0 6px" }}>能力声明（register retained）</div>

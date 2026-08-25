@@ -10,6 +10,7 @@
 
 import argparse
 import json
+import math
 import os
 import socket
 import sys
@@ -30,6 +31,10 @@ class VehicleSide:
         self.hz = hz
         self.arb = Arbiter()
         self.seq = 0
+        # GPS 模拟初值（WGS-84，北京城区一点）；总览高德底图纠偏后绘制轨迹
+        self.gps_lat, self.gps_lon, self.gps_alt = 39.908, 116.397, 44.0
+        self.gps_heading = 0.6
+        self.prev_speed = 0.0
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         for _ in range(50):  # Gateway 可能还没起，等待重试
             try:
@@ -119,6 +124,33 @@ class VehicleSide:
             for w in ("FL", "FR", "RL", "RR"):
                 signals.append({"path": "Vehicle.Chassis.WheelSpeeds." + w,
                                 "value": {"number": round(ws, 6)},
+                                "sample_monotonic_ns": ts,
+                                "quality": "SIGNAL_QUALITY_GOOD"})
+            # GPS 定位 + 油门/刹车（总览 GPS 轨迹与油门刹车曲线用）
+            dt = interval
+            if self.arb.speed > 0.05:
+                # 航向缓慢摆动形成自然轨迹；按速度推进 WGS-84 经纬度
+                self.gps_heading += 0.06 * math.sin(time.time() / 7.0)
+                dlat = (self.arb.speed * dt * math.cos(self.gps_heading)) / 111320.0
+                dlon = (self.arb.speed * dt * math.sin(self.gps_heading)) / (
+                    111320.0 * math.cos(math.radians(self.gps_lat)))
+                self.gps_lat += dlat
+                self.gps_lon += dlon
+            accel = (self.arb.speed - self.prev_speed) / dt
+            self.prev_speed = self.arb.speed
+            if accel > 0.05:
+                thr, brk = min(100.0, 25.0 + accel * 30.0), 0.0
+            elif accel < -0.05:
+                thr, brk = 0.0, min(100.0, 20.0 + abs(accel) * 30.0)
+            else:
+                thr, brk = (12.0 if self.arb.speed > 0.1 else 0.0), 0.0
+            for path, val in (("Vehicle.GPS.Fix", 1.0),
+                              ("Vehicle.GPS.Latitude", round(self.gps_lat, 7)),
+                              ("Vehicle.GPS.Longitude", round(self.gps_lon, 7)),
+                              ("Vehicle.GPS.Altitude", round(self.gps_alt, 1)),
+                              ("Vehicle.Chassis.Throttle.Pct", round(thr, 1)),
+                              ("Vehicle.Chassis.Brake.Pct", round(brk, 1))):
+                signals.append({"path": path, "value": {"number": val},
                                 "sample_monotonic_ns": ts,
                                 "quality": "SIGNAL_QUALITY_GOOD"})
             # 第 10 步：让大屏看到仲裁器真实状态

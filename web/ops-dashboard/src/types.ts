@@ -6,6 +6,13 @@ export interface Pose {
   yaw: number;
 }
 
+export interface GpsSnap {
+  fix: boolean;
+  lat: number;
+  lon: number;
+  alt: number;
+}
+
 export interface VehicleSnap {
   vehicle_id: string;
   online: boolean;
@@ -18,6 +25,11 @@ export interface VehicleSnap {
   steer_rad: number;
   wheel_speeds?: number[] | null;
   speed_history: number[] | null;
+  throttle_history: number[] | null;
+  brake_history: number[] | null;
+  throttle_pct: number;
+  brake_pct: number;
+  gps: GpsSnap;
   capabilities: Record<string, string>;
   pose: Pose;
 }

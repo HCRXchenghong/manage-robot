@@ -59,6 +59,20 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [pwdOpen, setPwdOpen] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    try {
+      return window.localStorage.getItem("nav-collapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("nav-collapsed", navCollapsed ? "1" : "0");
+    } catch {
+      /* 忽略 */
+    }
+  }, [navCollapsed]);
 
   useEffect(() => {
     void fetchMe().then((m) => {
@@ -118,16 +132,26 @@ export default function App() {
     <div className="app">
       <TopBar snap={scopedFleet.snap} source={scopedFleet.source} wsConnected={scopedFleet.wsConnected} />
       <div className="app-body">
-        <aside className="sidebar">
+        <aside className={"sidebar" + (navCollapsed ? " collapsed" : "")}>
+          <button
+            className="nav-collapse-btn"
+            title={navCollapsed ? "展开导航" : "收起导航"}
+            onClick={() => setNavCollapsed((v) => !v)}
+          >
+            {navCollapsed ? "»" : "«"}
+          </button>
           <nav>
             {NAV.filter((n) => !n.adminOnly || isAdmin).map((n) => (
               <button
                 key={n.id}
                 className={"nav-item" + (page === n.id ? " active" : "")}
                 onClick={() => setPage(n.id)}
+                title={n.label}
               >
                 <span className="nav-icon"><NavIcon name={n.icon} /></span>
-                <span>{n.id === "admin" && me.role === "group_admin" ? "成员管理" : n.label}</span>
+                <span className="nav-label">
+                  {n.id === "admin" && me.role === "group_admin" ? "成员管理" : n.label}
+                </span>
               </button>
             ))}
           </nav>
@@ -137,7 +161,7 @@ export default function App() {
             onClick={() => setUserMenu((v) => !v)}
           >
             <span className="avatar">{(me.display_name || me.username || "U").slice(0, 1)}</span>
-            <div>
+            <div className="user-txt">
               <div className="user-name">{me.display_name || me.username}</div>
               <div className="user-role">{roleLabel(me.role)}</div>
             </div>
