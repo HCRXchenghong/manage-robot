@@ -25,11 +25,12 @@ const MODE_LABEL: Record<string, string> = {
 interface Props {
   snap: FleetSnap;
   onSelect?: (id: string, goDetail?: boolean) => void;
+  onContext?: (id: string, x: number, y: number) => void;
   selectedId?: string | null;
   compact?: boolean;
 }
 
-export default function VehicleTable({ snap, onSelect, selectedId, compact }: Props) {
+export default function VehicleTable({ snap, onSelect, onContext, selectedId, compact }: Props) {
   const [q, setQ] = useState("");
   const [tab, setTab] = useState<"all" | "online" | "offline" | "alert">("all");
 
@@ -78,6 +79,10 @@ export default function VehicleTable({ snap, onSelect, selectedId, compact }: Pr
                   key={v.vehicle_id}
                   className={"clickable" + (selectedId === v.vehicle_id ? " selected" : "")}
                   onClick={() => onSelect && onSelect(v.vehicle_id, !compact)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (onContext) onContext(v.vehicle_id, e.clientX, e.clientY);
+                  }}
                 >
                   <td>{v.vehicle_id}</td>
                   <td><span className={"badge " + st.cls}>{st.label}</span></td>

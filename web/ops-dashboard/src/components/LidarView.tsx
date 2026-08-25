@@ -155,12 +155,25 @@ function VehicleMarker(props: {
   pose: Pose;
   color: string;
   selected: boolean;
-  onClick: () => void;
+  onClick: (x: number, y: number) => void;
+  onContext?: (x: number, y: number) => void;
 }) {
-  const { pose, color, selected, onClick } = props;
+  const { pose, color, selected, onClick, onContext } = props;
   return (
     <group position={[pose.x, 0, pose.y]} rotation={[0, Math.PI / 2 - pose.yaw, 0]}>
-      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, 1.4, 0]} onClick={onClick}>
+      <mesh
+        rotation={[Math.PI / 2, 0, 0]}
+        position={[0, 1.4, 0]}
+        onClick={(e: any) => {
+          e.stopPropagation();
+          onClick(e.clientX || 0, e.clientY || 0);
+        }}
+        onContextMenu={(e: any) => {
+          e.stopPropagation();
+          if (e.nativeEvent) e.nativeEvent.preventDefault();
+          if (onContext) onContext(e.clientX || 0, e.clientY || 0);
+        }}
+      >
         <coneGeometry args={[1.3, 3.2, 14]} />
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.35} />
       </mesh>
@@ -177,7 +190,11 @@ function VehicleMarker(props: {
 interface Props {
   snap: FleetSnap;
   selectedId?: string | null;
-  onSelect?: (id: string) => void;
+  onSelect?: (id: string, x: number, y: number) => void;
+  // 右键车辆标记 → 小菜单（定位到车 / 进入详情）
+  onContext?: (id: string, x: number, y: number) => void;
+  // 值变化时把视图中心移到当前选中车（列表点击 / 定位到车触发）
+  focusNonce?: number;
   // 地图内悬浮卡片（总览大屏）：左=车辆列表/告警与事件，右=详情/接管/终端
   overlayLeft?: ReactNode;
   overlayRight?: ReactNode;
@@ -185,7 +202,7 @@ interface Props {
   toolsRight?: number;
 }
 
-export default function LidarView({ snap, selectedId, onSelect, overlayLeft, overlayRight, toolsRight }: Props) {
+export default function LidarView({ snap, selectedId, onSelect, onContext, focusNonce, overlayLeft, overlayRight, toolsRight }: Props) {
   const [mode, setMode] = useState<ViewMode>("3d");
   const [pointSize, setPointSize] = useState(2);
   const [follow, setFollow] = useState(false);
@@ -217,12 +234,12 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
     c.update();
   };
 
-  // 居中到选中车辆；无选中则复位视角
-  const recenter = () => {
+  // 视图中心平移到指定车（列表点击/定位到车共用）；找不到车时可选复位视角
+  const centerOn = (id: string | null | undefined, fallbackReset: boolean) => {
     const c = controlsRef.current;
-    const v = snap.vehicles.find((x) => x.vehicle_id === selectedId);
+    const v = snap.vehicles.find((x) => x.vehicle_id === id);
     if (!c || !v) {
-      setRigKey((k) => k + 1);
+      if (fallbackReset) setRigKey((k) => k + 1);
       return;
     }
     const delta = new THREE.Vector3(v.pose.x, 0, v.pose.y).sub(c.target);
@@ -230,6 +247,11 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
     c.object.position.add(delta);
     c.update();
   };
+  const recenter = () => centerOn(selectedId, true);
+  useEffect(() => {
+    if (focusNonce) centerOn(selectedId, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce]);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) void document.exitFullscreen();
@@ -545,7 +567,8 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
               pose={v.pose}
               color={STATUS_CSS[vehicleStatusOf(v)]}
               selected={v.vehicle_id === selectedId}
-              onClick={() => onSelect && onSelect(v.vehicle_id)}
+              onClick={(x, y) => onSelect && onSelect(v.vehicle_id, x, y)}
+              onContext={(x, y) => onContext && onContext(v.vehicle_id, x, y)}
             />
           ))}
         </Canvas>

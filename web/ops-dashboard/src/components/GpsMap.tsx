@@ -63,7 +63,9 @@ export function wgs84ToGcj02(lng: number, lat: number): [number, number] {
 interface Props {
   snap: FleetSnap;
   selectedId?: string | null;
-  onSelect?: (id: string) => void;
+  onSelect?: (id: string, x: number, y: number) => void;
+  onContext?: (id: string, x: number, y: number) => void;
+  focusNonce?: number;
   overlayLeft?: ReactNode;
   overlayRight?: ReactNode;
 }
@@ -71,7 +73,7 @@ interface Props {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AM = any;
 
-export default function GpsMap({ snap, selectedId, onSelect, overlayLeft, overlayRight }: Props) {
+export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNonce, overlayLeft, overlayRight }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<AM>(null);
@@ -89,6 +91,8 @@ export default function GpsMap({ snap, selectedId, onSelect, overlayLeft, overla
   selectedRef.current = selectedId;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const onContextRef = useRef(onContext);
+  onContextRef.current = onContext;
 
   // 初始化 / key 变化时重建
   useEffect(() => {
@@ -213,7 +217,11 @@ export default function GpsMap({ snap, selectedId, onSelect, overlayLeft, overla
         el.className = "gps-mark";
         el.style.background = color;
         el.title = v.vehicle_id;
-        el.onclick = () => onSelectRef.current && onSelectRef.current(v.vehicle_id);
+      el.onclick = (ev) => onSelectRef.current && onSelectRef.current(v.vehicle_id, ev.clientX, ev.clientY);
+      el.oncontextmenu = (ev) => {
+        ev.preventDefault();
+        if (onContextRef.current) onContextRef.current(v.vehicle_id, ev.clientX, ev.clientY);
+      };
         mk = new AMap.Marker({ content: el, position: p, offset: new AMap.Pixel(-8, -8), zIndex: 120 });
         map.add(mk);
         markersRef.current[v.vehicle_id] = mk;
@@ -230,6 +238,15 @@ export default function GpsMap({ snap, selectedId, onSelect, overlayLeft, overla
       map.setCenter(focus);
     }
   }, [snap]);
+
+  // 列表点击 / 定位到车：地图中心平移到该车
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focusNonce) return;
+    const v = snap.vehicles.find((x) => x.vehicle_id === selectedRef.current);
+    if (v && v.gps && v.gps.fix) map.setCenter(wgs84ToGcj02(v.gps.lon, v.gps.lat));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNonce]);
 
   return (
     <div className="lidar-wrap">

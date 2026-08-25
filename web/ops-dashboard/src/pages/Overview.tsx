@@ -113,12 +113,37 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   });
   // 地图视图：点云地图 / GPS 轨迹
   const [mapKind, setMapKind] = useState<"lidar" | "gps">("lidar");
+  // 交互三件套：点列表/搜索 → 地图居中到该车（focusNonce 驱动点云/GPS）；
+  // 右键车辆（列表行或地图标记）→ 小菜单[定位到车/进入详情]；
+  // 单击地图车辆点 → 小窗确认是否进详情页。
+  const [focusNonce, setFocusNonce] = useState(0);
+  const [ctxMenu, setCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [confirmDetail, setConfirmDetail] = useState<{ id: string; x: number; y: number } | null>(null);
   const frozenRef = useRef<FleetSnap | null>(null);
 
   // 自动刷新关闭时冻结画面（仍接收数据，只是不渲染新值）
   if (autoRefresh) frozenRef.current = null;
   else if (!frozenRef.current) frozenRef.current = fleet.snap;
   const view = frozenRef.current || fleet.snap;
+
+  // 左侧列表/搜索/右键「定位到车」：选中 + 让地图居中到该车
+  const selectAndCenter = (id: string, goDetail?: boolean) => {
+    setCtxMenu(null);
+    setConfirmDetail(null);
+    onSelect(id, goDetail);
+    if (!goDetail) setFocusNonce((n) => n + 1);
+  };
+  // 地图车辆点单击：选中 + 弹小窗确认是否进详情
+  const markerClick = (id: string, x: number, y: number) => {
+    onSelect(id, false);
+    setCtxMenu(null);
+    setConfirmDetail({ id, x, y });
+  };
+  // 右键车辆：弹小菜单
+  const openCtx = (id: string, x: number, y: number) => {
+    setConfirmDetail(null);
+    setCtxMenu({ id, x, y });
+  };
 
   // 左右浮层两种地图视图共用
   const leftOverlay = (
@@ -135,7 +160,13 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
           />
         }
       >
-        <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
+        <VehicleTable
+          snap={view}
+          onSelect={selectAndCenter}
+          onContext={openCtx}
+          selectedId={selected ? selected.vehicle_id : null}
+          compact
+        />
       </CollapsePanel>
       <EventFeed events={view.events} compact fixed />
     </SideCol>
@@ -169,7 +200,9 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
             <LidarView
               snap={view}
               selectedId={selected ? selected.vehicle_id : null}
-              onSelect={(id) => onSelect(id, false)}
+              onSelect={markerClick}
+              onContext={openCtx}
+              focusNonce={focusNonce}
               toolsRight={rightOpen ? 318 : 52}
               overlayLeft={leftOverlay}
               overlayRight={rightOverlay}
@@ -178,13 +211,71 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
             <GpsMap
               snap={view}
               selectedId={selected ? selected.vehicle_id : null}
-              onSelect={(id) => onSelect(id, false)}
+              onSelect={markerClick}
+              onContext={openCtx}
+              focusNonce={focusNonce}
               overlayLeft={leftOverlay}
               overlayRight={rightOverlay}
             />
           )}
         </div>
       </div>
+      {ctxMenu && (
+        <>
+          <div
+            className="pop-mask"
+            onClick={() => setCtxMenu(null)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu(null);
+            }}
+          />
+          <div
+            className="ctx-menu"
+            style={{
+              left: Math.min(ctxMenu.x, window.innerWidth - 150),
+              top: Math.min(ctxMenu.y, window.innerHeight - 110),
+            }}
+          >
+            <button onClick={() => selectAndCenter(ctxMenu.id, false)}>定位到车</button>
+            <button
+              onClick={() => {
+                setCtxMenu(null);
+                onSelect(ctxMenu.id, true);
+              }}
+            >
+              进入详情
+            </button>
+          </div>
+        </>
+      )}
+      {confirmDetail && (
+        <>
+          <div className="pop-mask" onClick={() => setConfirmDetail(null)} />
+          <div
+            className="ctx-menu"
+            style={{
+              left: Math.min(confirmDetail.x, window.innerWidth - 200),
+              top: Math.min(confirmDetail.y, window.innerHeight - 130),
+            }}
+          >
+            <div className="ctx-title">进入车辆详情页？</div>
+            <div className="ctx-sub">{confirmDetail.id}</div>
+            <div className="ctx-row">
+              <button
+                className="primary"
+                onClick={() => {
+                  setConfirmDetail(null);
+                  onSelect(confirmDetail.id, true);
+                }}
+              >
+                确定
+              </button>
+              <button onClick={() => setConfirmDetail(null)}>取消</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

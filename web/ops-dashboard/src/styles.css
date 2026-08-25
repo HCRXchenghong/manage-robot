@@ -238,6 +238,24 @@ select.input { appearance: auto; }
 .veh-search-row { padding: 4px 8px; font-size: 11px; border-radius: 5px; cursor: pointer; color: var(--text-dim); }
 .veh-search-row:hover { background: rgba(33, 150, 243, 0.15); color: #7cc4ff; }
 .veh-search-row.sel { color: #7cc4ff; }
+/* 右键小菜单 / 确认进入详情小窗 */
+.pop-mask { position: fixed; inset: 0; z-index: 60; background: transparent; }
+.ctx-menu {
+  position: fixed; z-index: 61; min-width: 132px; padding: 4px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: rgba(8, 14, 28, 0.96); border: 1px solid var(--border); border-radius: 8px;
+  backdrop-filter: blur(6px);
+}
+.ctx-menu button {
+  text-align: left; padding: 6px 10px; font-size: 12px; cursor: pointer;
+  background: transparent; border: none; border-radius: 6px; color: #cfe0f8;
+}
+.ctx-menu button:hover { background: rgba(33, 150, 243, 0.15); color: #7cc4ff; }
+.ctx-menu button.primary { background: rgba(33, 150, 243, 0.25); color: #7cc4ff; }
+.ctx-title { font-size: 12px; padding: 6px 10px 2px; color: #cfe0f8; }
+.ctx-sub { font-size: 11px; padding: 0 10px 4px; color: var(--text-dim); }
+.ctx-row { display: flex; gap: 4px; }
+.ctx-row button { flex: 1; text-align: center; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;
