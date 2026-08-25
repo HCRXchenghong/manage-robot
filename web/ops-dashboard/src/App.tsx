@@ -133,14 +133,14 @@ export default function App() {
       <TopBar snap={scopedFleet.snap} source={scopedFleet.source} wsConnected={scopedFleet.wsConnected} />
       <div className="app-body">
         <aside className={"sidebar" + (navCollapsed ? " collapsed" : "")}>
-          <button
-            className="nav-collapse-btn"
-            title={navCollapsed ? "展开导航" : "收起导航"}
-            onClick={() => setNavCollapsed((v) => !v)}
-          >
-            {navCollapsed ? "»" : "«"}
-          </button>
           <nav>
+            <button
+              className="nav-collapse-btn"
+              title={navCollapsed ? "展开导航" : "收起导航"}
+              onClick={() => setNavCollapsed((v) => !v)}
+            >
+              {navCollapsed ? "»" : "«"}
+            </button>
             {NAV.filter((n) => !n.adminOnly || isAdmin).map((n) => (
               <button
                 key={n.id}
