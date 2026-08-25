@@ -68,7 +68,7 @@ export default function EventFeed({ events, compact, fixed, onExpand }: Props) {
       <div className="scroll">
         {filtered.length === 0 && <div className="muted" style={{ padding: 10 }}>暂无事件</div>}
         {filtered.map((e) => (
-          <div key={e.ts_ns + e.text} className={"event" + (readSet.has(e.ts_ns) ? " read" : "")}>
+          <div key={e.ts_ns + e.text} className={"event evt-" + e.level.toLowerCase() + (readSet.has(e.ts_ns) ? " read" : "")}>
             <span className={"event-time lvl-" + e.level}>{fmtTime(e.ts_ns)}</span>
             <span className="event-text">
               <span className={"lvl-" + e.level}>[{e.level}]</span>{" "}

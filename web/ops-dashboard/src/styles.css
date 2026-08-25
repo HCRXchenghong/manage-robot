@@ -266,7 +266,12 @@ select.input { appearance: auto; }
 .gps-sat-btn:hover { border-color: #2196f3; color: #7cc4ff; }
 /* 总览左列下半：远程终端(上) + 告警与事件(下) 平分原告警区 */
 .ov-split { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
-.ov-split .term-box { min-height: 110px; }
+.ov-split .term-box { min-height: 84px; }
+/* 总览半区终端只作预览：按钮收进大弹窗，省高度 */
+.ov-split .btn-row.mt { display: none; }
+/* SideCol「展开更多」弹窗里给终端固定高度，防 xterm 自适应死循环 */
+.side-modal-body .ov-split { flex: none; }
+.side-modal-body .term-box { flex: none; height: 300px; }
 /* 紧凑双视频监控（前向 / 俯视并排） */
 .mini-videos { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mini-video { position: relative; min-width: 0; }
@@ -278,6 +283,67 @@ select.input { appearance: auto; }
 /* 放大弹窗内容：面板撑满弹窗高度 */
 .big-modal-body { display: flex; flex-direction: column; }
 .big-modal-body .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+/* 点击任意空白处弹窗放大 */
+.ov-click { cursor: pointer; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 面板内容层撑满（视频/终端/事件在浮层里按 flex 伸展） */
+.map-overlay .panel > div:last-child { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.mini-videos { flex: 1; height: auto; }
+/* 仪表盘式可视化 */
+.dash { display: flex; flex-direction: column; gap: 14px; }
+.dash-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font-size: 11px; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border); color: var(--text-dim); background: rgba(8,14,28,.5); }
+.chip.ok { color: #4ade80; border-color: rgba(34,197,94,.4); }
+.chip.err { color: #f87171; border-color: rgba(239,68,68,.4); }
+.compact-gauges { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.compact-gauges .dial svg { max-width: 118px; }
+.dash-gauges { display: grid; grid-template-columns: 1.1fr 1.1fr 1fr 1fr; gap: 12px; align-items: stretch; }
+.dash-gauges .dial svg { max-width: 150px; }
+.dial { position: relative; text-align: center; min-width: 0; }
+.dial svg { width: 100%; }
+.dial-track { fill: none; stroke: rgba(148,184,255,.15); stroke-width: 7; stroke-linecap: round; }
+.dial-fill { fill: none; stroke-width: 7; stroke-linecap: round; }
+.dial-tick { stroke: rgba(148,184,255,.35); stroke-width: 1.5; }
+.dial-needle { stroke: #e2e8f0; stroke-width: 2; stroke-linecap: round; }
+.dial-hub { fill: #e2e8f0; }
+.dial-read { position: absolute; left: 0; right: 0; bottom: 6%; pointer-events: none; }
+.dial-val { font-size: 19px; font-weight: 700; }
+.compact-gauges .dial-val { font-size: 15px; }
+.dial-unit { font-size: 10px; color: var(--text-dim); }
+.dial-sub { font-size: 10px; color: var(--text-dim); }
+.pedals { display: flex; gap: 14px; justify-content: center; align-items: flex-end; }
+.pedal { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.pedal-bar { position: relative; width: 34px; height: 120px; background: rgba(8,14,28,.7); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.pedals.small .pedal-bar { height: 74px; width: 30px; }
+.pedal-fill { position: absolute; bottom: 0; left: 0; right: 0; transition: height .3s; }
+.pedal-fill.thr { background: linear-gradient(180deg, #4ade80, #166534); }
+.pedal-fill.brk { background: linear-gradient(180deg, #f87171, #7f1d1d); }
+.pedal-pct { position: absolute; top: 4px; left: 0; right: 0; text-align: center; font-size: 10px; color: #e2e8f0; text-shadow: 0 1px 2px #000; }
+.pedal-label { font-size: 11px; color: var(--text-dim); }
+.dash-bars { display: flex; flex-direction: column; gap: 12px; justify-content: center; }
+.barg-head { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.barg-track { height: 8px; border-radius: 99px; background: rgba(8,14,28,.7); border: 1px solid var(--border); overflow: hidden; }
+.barg-fill { height: 100%; border-radius: 99px; transition: width .3s; }
+.barg-scale { display: flex; justify-content: space-between; font-size: 9px; color: var(--text-dim); margin-top: 2px; }
+.accel-chart .chart-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin-bottom: 4px; }
+.accel-chart svg { width: 100%; display: block; background: rgba(5,8,15,.6); border: 1px solid var(--border); border-radius: 8px; }
+.accel-zero { stroke: rgba(148,184,255,.25); stroke-dasharray: 4 4; }
+.accel-line { fill: none; stroke: #f59e0b; stroke-width: 2; }
+.sig-table-wrap { max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 8px; }
+.sig-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sig-table th, .sig-table td { padding: 5px 10px; border-bottom: 1px solid rgba(26,39,69,.6); }
+.sig-table th { color: var(--text-dim); text-align: left; position: sticky; top: 0; background: #0b1220; }
+.sig-table .dim { color: var(--text-dim); }
+/* 事件行 UI：按级别左侧色条 + 圆角 + hover */
+.event { border-left: 3px solid transparent; border-bottom: 1px solid rgba(26,39,69,.55); border-radius: 6px; padding: 6px 8px; margin: 2px 0; }
+.event:hover { background: rgba(33,150,243,.06); }
+.evt-info { border-left-color: #38bdf8; }
+.evt-warn { border-left-color: #eab308; background: rgba(234,179,8,.05); }
+.evt-critical { border-left-color: #ef4444; background: rgba(239,68,68,.07); }
+/* 双视频上下竖排占满 */
+.mini-videos { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
+.mini-video { position: relative; flex: 1; min-height: 0; }
+.mini-video canvas { display: block; width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--border); background: #05080f; }
+.mini-video .video-meta { left: 6px; top: 5px; font-size: 10px; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;

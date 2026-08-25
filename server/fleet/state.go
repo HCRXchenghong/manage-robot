@@ -66,6 +66,10 @@ type VehicleSnap struct {
 	BrakeHistory      []float64         `json:"brake_history"`
 	ThrottlePct       float64           `json:"throttle_pct"`
 	BrakePct          float64           `json:"brake_pct"`
+	AccelMps2         float64           `json:"accel_mps2"`
+	AccelHistory      []float64         `json:"accel_history"`
+	CabinTempC        float64           `json:"cabin_temp_c"`
+	CabinHumidityPct  float64           `json:"cabin_humidity_pct"`
 	Gps               GpsSnap           `json:"gps"`
 	Capabilities      map[string]string `json:"capabilities"`
 	Pose              Pose              `json:"pose"`
@@ -102,28 +106,32 @@ type signalVal struct {
 
 // vehicleState 单车可变状态（受 State.mu 保护）。
 type vehicleState struct {
-	id           string
-	group        string
-	online       bool
-	lastSeen     time.Time // 最近一次遥测时刻
-	mode         string
-	speedMPS     float64
-	soc          float64
-	voltage      float64
-	gear         string
-	steerRad     float64
-	wheelSpeeds  [4]float64
-	speedHist    []float64
-	throttleHist []float64
-	brakeHist    []float64
-	throttlePct  float64
-	brakePct     float64
-	gpsFix       bool
-	gpsLat       float64
-	gpsLon       float64
-	gpsAlt       float64
-	capabilities map[string]string
-	lastSampleAt time.Time // 上次入库时刻（抽稀用）
+	id            string
+	group         string
+	online        bool
+	lastSeen      time.Time // 最近一次遥测时刻
+	mode          string
+	speedMPS      float64
+	soc           float64
+	voltage       float64
+	gear          string
+	steerRad      float64
+	wheelSpeeds   [4]float64
+	speedHist     []float64
+	throttleHist  []float64
+	brakeHist     []float64
+	throttlePct   float64
+	brakePct      float64
+	accelMps2     float64
+	accelHist     []float64
+	cabinTempC    float64
+	cabinHumidity float64
+	gpsFix        bool
+	gpsLat        float64
+	gpsLon        float64
+	gpsAlt        float64
+	capabilities  map[string]string
+	lastSampleAt  time.Time // 上次入库时刻（抽稀用）
 }
 
 type dbJob func(ctx context.Context, db *sql.DB)
@@ -282,6 +290,22 @@ func (s *State) HandleTelemetry(id string, sigs []signalVal) {
 		case "Vehicle.GPS.Fix":
 			if sg.Num != nil {
 				v.gpsFix = *sg.Num > 0.5
+			}
+		case "Vehicle.Chassis.Accel.Longitudinal":
+			if sg.Num != nil {
+				v.accelMps2 = *sg.Num
+				v.accelHist = append(v.accelHist, round2(*sg.Num))
+				if len(v.accelHist) > speedHistCap {
+					v.accelHist = v.accelHist[len(v.accelHist)-speedHistCap:]
+				}
+			}
+		case "Vehicle.Cabin.Temperature.C":
+			if sg.Num != nil {
+				v.cabinTempC = *sg.Num
+			}
+		case "Vehicle.Cabin.Humidity.Pct":
+			if sg.Num != nil {
+				v.cabinHumidity = *sg.Num
 			}
 		case "Vehicle.GPS.Latitude":
 			if sg.Num != nil {
@@ -472,6 +496,10 @@ func (s *State) Snapshot() FleetSnap {
 			BrakeHistory:      append([]float64(nil), v.brakeHist...),
 			ThrottlePct:       round2(v.throttlePct),
 			BrakePct:          round2(v.brakePct),
+			AccelMps2:         round2(v.accelMps2),
+			AccelHistory:      append([]float64(nil), v.accelHist...),
+			CabinTempC:        round2(v.cabinTempC),
+			CabinHumidityPct:  round2(v.cabinHumidity),
 			Gps:               GpsSnap{Fix: v.gpsFix, Lat: round6(v.gpsLat), Lon: round6(v.gpsLon), Alt: round2(v.gpsAlt)},
 			Capabilities:      copyMap(v.capabilities),
 			Pose:              poseFor(v.id),

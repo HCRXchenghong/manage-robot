@@ -102,7 +102,7 @@ export default function TerminalPanel({ vehicle, fixed, onExpand }: Props) {
       title={"远程终端 · " + vid}
       hint={conn === "open" ? "已连接" : conn === "connecting" ? "连接中…" : "未连接"}
     >
-      <div className="term-box" ref={boxRef} />
+      <div className={"term-box" + (conn === "open" ? " live" : "")} ref={boxRef} />
       <div className="btn-row mt">
         <button className="btn small primary" disabled={conn !== "closed"} onClick={connect}>打开终端</button>
         <button className="btn small" disabled={conn === "closed"} onClick={disconnect}>断开</button>

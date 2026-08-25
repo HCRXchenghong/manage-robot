@@ -30,6 +30,10 @@ export interface VehicleSnap {
   brake_history: number[] | null;
   throttle_pct: number;
   brake_pct: number;
+  accel_mps2?: number;
+  accel_history?: number[] | null;
+  cabin_temp_c?: number;
+  cabin_humidity_pct?: number;
   gps: GpsSnap;
   capabilities: Record<string, string>;
   pose: Pose;

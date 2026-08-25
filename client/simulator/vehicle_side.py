@@ -149,7 +149,12 @@ class VehicleSide:
                               ("Vehicle.GPS.Longitude", round(self.gps_lon, 7)),
                               ("Vehicle.GPS.Altitude", round(self.gps_alt, 1)),
                               ("Vehicle.Chassis.Throttle.Pct", round(thr, 1)),
-                              ("Vehicle.Chassis.Brake.Pct", round(brk, 1))):
+                              ("Vehicle.Chassis.Brake.Pct", round(brk, 1)),
+                              ("Vehicle.Chassis.Accel.Longitudinal", round(accel, 3)),
+                              ("Vehicle.Cabin.Temperature.C",
+                               round(26.0 + 2.0 * math.sin(time.time() / 37.0), 1)),
+                              ("Vehicle.Cabin.Humidity.Pct",
+                               round(45.0 + 6.0 * math.sin(time.time() / 53.0), 1))):
                 signals.append({"path": path, "value": {"number": val},
                                 "sample_monotonic_ns": ts,
                                 "quality": "SIGNAL_QUALITY_GOOD"})
