@@ -66,6 +66,8 @@ interface Props {
   onSelect?: (id: string, x: number, y: number) => void;
   onContext?: (id: string, x: number, y: number) => void;
   focusNonce?: number;
+  // 右上角按钮距右缘距离（随右浮层开合联动，避免被浮层挡住）
+  toolsRight?: number;
   overlayLeft?: ReactNode;
   overlayRight?: ReactNode;
 }
@@ -73,7 +75,7 @@ interface Props {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AM = any;
 
-export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNonce, overlayLeft, overlayRight }: Props) {
+export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNonce, toolsRight, overlayLeft, overlayRight }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<AM>(null);
@@ -87,6 +89,9 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
   followRef.current = follow;
   const [msg, setMsg] = useState("");
   const [coordText, setCoordText] = useState("无定位");
+  const [sat, setSat] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const satLayersRef = useRef<AM[]>([]);
   const selectedRef = useRef(selectedId);
   selectedRef.current = selectedId;
   const onSelectRef = useRef(onSelect);
@@ -114,6 +119,8 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
       map.on("dragstart", () => (lastDragRef.current = Date.now()));
       mapRef.current = map;
       readyRef.current = true;
+      setSat(false);
+      satLayersRef.current = [];
       ptsRef.current = {};
       setMsg("");
     };
@@ -239,6 +246,24 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
     }
   }, [snap]);
 
+  // 一键切换卫星图 / 标准暗色图（高德卫星图层 + 路网标注叠加）
+  const toggleSat = () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const AMap = (window as any).AMap;
+    const map = mapRef.current;
+    if (!map || typeof AMap === "undefined") return;
+    if (!sat) {
+      const layers = [new AMap.TileLayer.Satellite(), new AMap.TileLayer.RoadNet()];
+      satLayersRef.current = layers;
+      map.add(layers);
+      setSat(true);
+    } else {
+      if (satLayersRef.current.length) map.remove(satLayersRef.current);
+      satLayersRef.current = [];
+      setSat(false);
+    }
+  };
+
   // 列表点击 / 定位到车：地图中心平移到该车
   useEffect(() => {
     const map = mapRef.current;
@@ -263,6 +288,9 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
       </div>
       <div className="lidar-canvas">
         <div ref={boxRef} className="gps-map" />
+        <button className="gps-sat-btn" style={{ right: toolsRight ?? 12 }} onClick={toggleSat}>
+          {sat ? "标准地图" : "卫星地图"}
+        </button>
         {msg && (
           <div className="lidar-hint" style={{ top: 10, left: "50%", transform: "translateX(-50%)", color: "#fca5a5", pointerEvents: "auto" }}>
             {msg}

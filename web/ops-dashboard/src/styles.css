@@ -256,6 +256,14 @@ select.input { appearance: auto; }
 .ctx-sub { font-size: 11px; padding: 0 10px 4px; color: var(--text-dim); }
 .ctx-row { display: flex; gap: 4px; }
 .ctx-row button { flex: 1; text-align: center; }
+/* GPS 一键卫星图切换（右上角，随右浮层联动避让） */
+.gps-sat-btn {
+  position: absolute; top: 10px; z-index: 7;
+  padding: 6px 10px; font-size: 11px; cursor: pointer;
+  background: rgba(8, 14, 28, 0.86); backdrop-filter: blur(4px);
+  border: 1px solid rgba(148, 184, 255, 0.15); border-radius: 8px; color: #cfe0f8;
+}
+.gps-sat-btn:hover { border-color: #2196f3; color: #7cc4ff; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;

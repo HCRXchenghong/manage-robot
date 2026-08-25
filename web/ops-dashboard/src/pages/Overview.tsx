@@ -214,6 +214,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
               onSelect={markerClick}
               onContext={openCtx}
               focusNonce={focusNonce}
+              toolsRight={rightOpen ? 318 : 52}
               overlayLeft={leftOverlay}
               overlayRight={rightOverlay}
             />
