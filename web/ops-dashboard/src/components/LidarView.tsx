@@ -402,8 +402,6 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
     }
   };
 
-  const selectedVehicle = snap.vehicles.find((v) => v.vehicle_id === selectedId) || null;
-
   // 导出 ROS map_server 三件套：PNG（人看）+ PGM + YAML（车端导航栈直接吃）
   const exportBev = () => {
     if (!bev) return;
@@ -558,15 +556,12 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
           <div className="legend-row"><span className="legend-chip" style={{ background: "#ef4444" }} />告警（最小风险）</div>
           <div className="legend-row"><span className="legend-chip" style={{ background: "#1e4a7a" }} />静态基础设施</div>
           {bev && gridOn && (
-            <div className="legend-row">
+            <div className="legend-row legend-meta">
               网格 {bev.nx}×{bev.ny} · 占据 {bev.occupiedCells} · 切片 {bev.z0.toFixed(1)}~{bev.z1.toFixed(1)}m
             </div>
           )}
         </div>
-        <div className="lidar-hint">
-          {mode === "3d" ? "拖拽旋转 · 滚轮缩放 · 点击锥体选车" : "拖拽平移 · 滚轮缩放 · 点击锥体选车"}
-          {selectedVehicle ? " · 选中 " + selectedVehicle.vehicle_id : ""}
-        </div>
+        <div className="lidar-hint">{mode === "3d" ? "拖拽旋转 · 滚轮缩放" : "拖拽平移 · 滚轮缩放"}</div>
         {error && (
           <div
             className="lidar-hint"
@@ -578,14 +573,10 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
         {overlayLeft && <div className="map-overlay left">{overlayLeft}</div>}
         {overlayRight && <div className="map-overlay right">{overlayRight}</div>}
         <div className="map-tools" style={{ right: toolsRight ?? 12 }}>
-          <button className="tool-btn" title="全屏投屏 / 退出" onClick={toggleFullscreen}>⛶</button>
-          <button className="tool-btn" title="居中选中车辆（无选中则复位视角）" onClick={recenter}>◎</button>
-          <button className="tool-btn" title="放大" onClick={() => zoomBy(1.25)}>＋</button>
-          <button className="tool-btn" title="缩小" onClick={() => zoomBy(0.8)}>－</button>
           <div className="tool-wrap">
             <button
               className={"tool-btn" + (layersOpen ? " active" : "")}
-              title="图层"
+              title="编辑地图（图层）"
               onClick={() => setLayersOpen((o) => !o)}
             >
               ▤
@@ -601,6 +592,10 @@ export default function LidarView({ snap, selectedId, onSelect, overlayLeft, ove
               </div>
             )}
           </div>
+          <button className="tool-btn" title="全屏投屏 / 退出" onClick={toggleFullscreen}>⛶</button>
+          <button className="tool-btn" title="居中选中车辆（无选中则复位视角）" onClick={recenter}>◎</button>
+          <button className="tool-btn" title="放大" onClick={() => zoomBy(1.25)}>＋</button>
+          <button className="tool-btn" title="缩小" onClick={() => zoomBy(0.8)}>－</button>
         </div>
       </div>
     </div>

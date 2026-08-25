@@ -211,13 +211,33 @@ select.input { appearance: auto; }
 .lidar-toolbar .spacer { flex: 1; }
 .lidar-canvas { order: 1; position: relative; flex: 1; min-width: 0; min-height: 0; border-radius: 8px; overflow: hidden; background: #060b16; border: 1px solid var(--border); }
 .lidar-legend {
-  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
-  background: rgba(8, 14, 28, 0.82); border: 1px solid var(--border);
-  border-radius: 8px; padding: 8px 10px; font-size: 11px; color: var(--text-dim);
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 5;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px;
+  padding: 4px 12px; font-size: 11px; color: var(--text-dim);
+  background: rgba(6, 11, 22, 0.72); backdrop-filter: blur(4px);
+  border-top: 1px solid rgba(148, 184, 255, 0.1);
   pointer-events: none;
 }
-.legend-row { display: flex; align-items: center; gap: 6px; margin: 3px 0; }
+.legend-row { display: inline-flex; align-items: center; gap: 6px; margin: 0; }
+.legend-meta { margin-left: auto; }
 .legend-chip { width: 10px; height: 10px; border-radius: 3px; }
+/* 车辆搜索小框（车辆列表标题栏，替代旧「点击选中联动地图」） */
+.veh-search { position: relative; }
+.veh-search input {
+  width: 178px; padding: 3px 8px; font-size: 11px; outline: none;
+  background: rgba(8, 14, 28, 0.7); border: 1px solid var(--border);
+  border-radius: 6px; color: #cfe0f8;
+}
+.veh-search input:focus { border-color: #2196f3; }
+.veh-search input::placeholder { color: var(--text-dim); }
+.veh-search-pop {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 40;
+  min-width: 170px; max-height: 220px; overflow: auto; padding: 4px;
+  background: rgba(8, 14, 28, 0.96); border: 1px solid var(--border); border-radius: 8px;
+}
+.veh-search-row { padding: 4px 8px; font-size: 11px; border-radius: 5px; cursor: pointer; color: var(--text-dim); }
+.veh-search-row:hover { background: rgba(33, 150, 243, 0.15); color: #7cc4ff; }
+.veh-search-row.sel { color: #7cc4ff; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;
@@ -226,7 +246,7 @@ select.input { appearance: auto; }
 
 /* 地图内悬浮卡片（总览大屏）：浮在点云画布左右两侧，整列可收起成细竖条 */
 .map-overlay {
-  position: absolute; top: 10px; bottom: 10px; z-index: 6;
+  position: absolute; top: 10px; bottom: 32px; z-index: 6;
   display: flex; flex-direction: column; max-width: 46%;
   justify-content: center;
 }

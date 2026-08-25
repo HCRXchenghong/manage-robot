@@ -60,14 +60,17 @@ export default function SideCol({ id, label, children, side = "left", open: open
   return (
     <div className="side-col">
       <div className="side-head">
+        {side === "left" && (
+          <button className="btn small ghost" onClick={() => setOpen(false)} title="向左收起（外侧）">
+            ⟨
+          </button>
+        )}
         <span className="muted" style={{ fontSize: 11 }}>{label}</span>
-        <button
-          className="btn small ghost"
-          onClick={() => setOpen(false)}
-          title={side === "left" ? "向左收起" : "向右收起"}
-        >
-          {side === "left" ? "⟨" : "⟩"}
-        </button>
+        {side === "right" && (
+          <button className="btn small ghost" onClick={() => setOpen(false)} title="向右收起（外侧）">
+            ⟩
+          </button>
+        )}
       </div>
       {expanded ? (
         <Modal title={label} onClose={() => setExpanded(false)} width="min(720px, 94vw)">

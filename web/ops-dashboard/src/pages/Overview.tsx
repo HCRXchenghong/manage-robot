@@ -20,6 +20,66 @@ interface Props {
   onSelect: (id: string, goDetail?: boolean) => void;
 }
 
+// 车辆搜索小框：替代旧「点击选中联动地图」，输入 ID 过滤，
+// 回车或点结果即选中并联动地图；placeholder 显示当前选中车。
+function VehicleSearch({
+  vehicles,
+  selectedId,
+  onSelect,
+}: {
+  vehicles: VehicleSnap[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const kw = q.trim().toLowerCase();
+  const matches = kw ? vehicles.filter((v) => v.vehicle_id.toLowerCase().includes(kw)) : vehicles;
+  const pick = (id: string) => {
+    onSelect(id);
+    setQ("");
+    setOpen(false);
+  };
+  return (
+    <div className="veh-search" ref={boxRef}>
+      <input
+        value={q}
+        placeholder={selectedId ? "搜索车辆 · 当前 " + selectedId : "搜索车辆"}
+        onChange={(e) => {
+          setQ(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && matches.length > 0) pick(matches[0].vehicle_id);
+          if (e.key === "Escape") setOpen(false);
+        }}
+      />
+      {open && matches.length > 0 && (
+        <div className="veh-search-pop">
+          {matches.slice(0, 8).map((v) => (
+            <div
+              key={v.vehicle_id}
+              className={"veh-search-row" + (v.vehicle_id === selectedId ? " sel" : "")}
+              onMouseDown={() => pick(v.vehicle_id)}
+            >
+              {v.vehicle_id}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Overview({ fleet, selected, onSelect }: Props) {
   // 自动刷新在「设置 → 车辆与底盘」配置（默认开），保存后实时生效
   const [autoRefresh, setAutoRefresh] = useState<boolean>(() => {
@@ -63,7 +123,18 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   // 左右浮层两种地图视图共用
   const leftOverlay = (
     <SideCol id="left" side="left" label="车辆列表 / 告警事件">
-      <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图" fixed>
+      <CollapsePanel
+        id="ov-vehicles"
+        title="车辆列表"
+        fixed
+        right={
+          <VehicleSearch
+            vehicles={view.vehicles}
+            selectedId={selected ? selected.vehicle_id : null}
+            onSelect={(id) => onSelect(id, false)}
+          />
+        }
+      >
         <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
       </CollapsePanel>
       <EventFeed events={view.events} compact fixed />
