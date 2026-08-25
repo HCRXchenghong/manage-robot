@@ -228,6 +228,7 @@ select.input { appearance: auto; }
 .map-overlay {
   position: absolute; top: 10px; bottom: 10px; z-index: 6;
   display: flex; flex-direction: column; max-width: 46%;
+  justify-content: center;
 }
 .map-overlay.left { left: 10px; }
 .map-overlay.right { right: 10px; }
@@ -237,6 +238,17 @@ select.input { appearance: auto; }
   border: 1px solid var(--border); border-radius: 10px; padding: 8px;
 }
 .map-overlay .side-rail { height: 100%; background: rgba(8, 14, 28, 0.85); backdrop-filter: blur(4px); }
+/* 收起态：中间一小块竖排小签，提示可展开 */
+.side-rail-mini {
+  cursor: pointer; padding: 12px 5px; border-radius: 9px;
+  background: rgba(8, 14, 28, 0.85); backdrop-filter: blur(4px);
+  border: 1px solid var(--border); color: var(--text-dim);
+  max-height: 190px; overflow: hidden; white-space: nowrap;
+}
+.side-rail-mini:hover { border-color: #2196f3; color: #7cc4ff; }
+.side-rail-mini .vtext { writing-mode: vertical-rl; font-size: 11px; letter-spacing: 2px; }
+.map-overlay.left .side-rail-mini { align-self: flex-start; }
+.map-overlay.right .side-rail-mini { align-self: flex-end; }
 /* 浮层内卡片：去掉逐张边框，磨砂底 + 细分隔线分区 */
 .map-overlay .panel { background: transparent; border: none; border-radius: 0; padding: 6px 4px; }
 .map-overlay .panel + .panel { border-top: 1px solid rgba(148, 184, 255, 0.10); }

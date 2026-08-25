@@ -52,7 +52,7 @@ export default function SideCol({ id, label, children, side = "left", open: open
 
   if (!open) {
     return (
-      <div className="side-rail" onClick={() => setOpen(true)} title={"展开 " + label}>
+      <div className="side-rail-mini" onClick={() => setOpen(true)} title={"展开 " + label}>
         <span className="vtext">{side === "left" ? "⟩ " : "⟨ "}{label}</span>
       </div>
     );

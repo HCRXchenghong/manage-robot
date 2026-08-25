@@ -29,7 +29,7 @@ interface Props {
 export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Props) {
   if (!vehicle) {
     return (
-      <CollapsePanel id="ov-detail" title="车辆详情">
+      <CollapsePanel id="ov-detail" title="车辆详情" fixed={compact}>
         <VehicleTable snap={fleet.snap} onSelect={onSelect} />
       </CollapsePanel>
     );
@@ -38,6 +38,7 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact }: Pro
   return (
     <CollapsePanel
       id="ov-detail"
+      fixed={compact}
       title={"车辆详情 · " + v.vehicle_id}
       hint={STATUS_LABEL[vehicleStatusOf(v)] + " · " + (MODE_LABEL[v.mode] || v.mode || "-")}
     >

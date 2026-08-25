@@ -8,11 +8,12 @@ import { wsURL } from "../api";
 
 interface Props {
   vehicle: VehicleSnap | null;
+  fixed?: boolean;
 }
 
 type ConnState = "closed" | "connecting" | "open";
 
-export default function TerminalPanel({ vehicle }: Props) {
+export default function TerminalPanel({ vehicle, fixed }: Props) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -95,6 +96,7 @@ export default function TerminalPanel({ vehicle }: Props) {
   return (
     <CollapsePanel
       id="ov-terminal"
+      fixed={fixed}
       title={"远程终端 · " + vid}
       hint={conn === "open" ? "已连接" : conn === "connecting" ? "连接中…" : "未连接"}
     >

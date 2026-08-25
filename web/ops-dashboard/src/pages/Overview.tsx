@@ -63,16 +63,16 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   // 左右浮层两种地图视图共用
   const leftOverlay = (
     <SideCol id="left" side="left" label="车辆列表 / 告警事件">
-      <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图">
+      <CollapsePanel id="ov-vehicles" title="车辆列表" hint="点击选中联动地图" fixed>
         <VehicleTable snap={view} onSelect={onSelect} selectedId={selected ? selected.vehicle_id : null} compact />
       </CollapsePanel>
-      <EventFeed events={view.events} compact />
+      <EventFeed events={view.events} compact fixed />
     </SideCol>
   );
   const rightOverlay = (
     <SideCol id="right" side="right" label="详情 / 终端" open={rightOpen} onOpenChange={setRightOpen}>
       <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
-      <TerminalPanel vehicle={selected} />
+      <TerminalPanel vehicle={selected} fixed />
     </SideCol>
   );
 
