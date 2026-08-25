@@ -11,9 +11,11 @@ interface Props {
   children: ReactNode;
   // 固定模式：恒展开、隐藏收起按钮（总览大屏四个固定区域用）
   fixed?: boolean;
+  // 点击标题/⤢ 按钮的回调（总览小卡片弹窗放大用）
+  onTitleClick?: () => void;
 }
 
-export default function CollapsePanel({ id, title, hint, right, children, fixed }: Props) {
+export default function CollapsePanel({ id, title, hint, right, children, fixed, onTitleClick }: Props) {
   const [open, setOpen] = useState<boolean>(() => {
     try {
       const v = window.localStorage.getItem("cp-open-" + id);
@@ -34,15 +36,20 @@ export default function CollapsePanel({ id, title, hint, right, children, fixed 
     <div className={"panel" + (fixed || open ? "" : " cpanel-collapsed")}>
       <div className="panel-title">
         <span
-          style={fixed ? undefined : { cursor: "pointer" }}
-          title={fixed ? undefined : open ? "点击收起" : "点击展开"}
-          onClick={fixed ? undefined : () => setOpen((o) => !o)}
+          style={fixed && !onTitleClick ? undefined : { cursor: "pointer" }}
+          title={onTitleClick ? "点击弹窗放大" : fixed ? undefined : open ? "点击收起" : "点击展开"}
+          onClick={onTitleClick ? onTitleClick : fixed ? undefined : () => setOpen((o) => !o)}
         >
           {title}
           {hint ? <span className="hint"> {hint}</span> : null}
         </span>
         <span className="btn-row">
           {right}
+          {onTitleClick && (
+            <button className="btn small ghost" title="弹窗放大" onClick={onTitleClick}>
+              ⤢
+            </button>
+          )}
           {!fixed && (
             <button className="btn small ghost" onClick={() => setOpen((o) => !o)}>
               {open ? "收起 ▾" : "展开 ▸"}

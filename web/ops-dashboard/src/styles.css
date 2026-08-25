@@ -264,6 +264,20 @@ select.input { appearance: auto; }
   border: 1px solid rgba(148, 184, 255, 0.15); border-radius: 8px; color: #cfe0f8;
 }
 .gps-sat-btn:hover { border-color: #2196f3; color: #7cc4ff; }
+/* 总览左列下半：远程终端(上) + 告警与事件(下) 平分原告警区 */
+.ov-split { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.ov-split .term-box { min-height: 110px; }
+/* 紧凑双视频监控（前向 / 俯视并排） */
+.mini-videos { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.mini-video { position: relative; min-width: 0; }
+.mini-video canvas {
+  display: block; width: 100%; height: auto;
+  border-radius: 6px; border: 1px solid var(--border); background: #05080f;
+}
+.mini-video .video-meta { left: 6px; top: 5px; font-size: 10px; }
+/* 放大弹窗内容：面板撑满弹窗高度 */
+.big-modal-body { display: flex; flex-direction: column; }
+.big-modal-body .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
   color: var(--text-dim); background: rgba(8,14,28,.7); padding: 4px 8px;

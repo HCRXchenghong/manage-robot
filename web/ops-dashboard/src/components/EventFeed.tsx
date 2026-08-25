@@ -6,6 +6,7 @@ interface Props {
   events: EventSnap[];
   compact?: boolean;
   fixed?: boolean;
+  onExpand?: () => void;
 }
 
 function fmtTime(tsNs: number): string {
@@ -28,7 +29,7 @@ export function downloadEventsCSV(events: EventSnap[], filename: string) {
   URL.revokeObjectURL(a.href);
 }
 
-export default function EventFeed({ events, compact, fixed }: Props) {
+export default function EventFeed({ events, compact, fixed, onExpand }: Props) {
   const [readSet, setReadSet] = useState<Set<number>>(new Set());
   const [rangeMin, setRangeMin] = useState<number>(0); // 0 = 全部
 
@@ -46,6 +47,7 @@ export default function EventFeed({ events, compact, fixed }: Props) {
     <CollapsePanel
       id="ov-events"
       fixed={fixed}
+      onTitleClick={onExpand}
       title={"告警与事件" + (compact ? "" : "（最新在前）")}
       right={
         <span className="btn-row">

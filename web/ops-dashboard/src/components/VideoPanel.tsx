@@ -4,15 +4,17 @@ import type { VehicleSnap } from "../types";
 // 阶段 1：模拟画面（canvas 动效）。阶段 2 换 media-control 的 WebRTC 真实流，
 // 组件接口不变（只换 <canvas> 为 <video>）。
 
-interface Props {
-  vehicle: VehicleSnap | null;
+// 模拟机位 canvas：总览双视频与视频监控页共用（阶段 2 换 WebRTC 时只改这里）
+export function SimCamCanvas({
+  camera,
+  playing = true,
+  height = 220,
+}: {
+  camera: "front" | "top";
+  playing?: boolean;
   height?: number;
-}
-
-export default function VideoPanel({ vehicle, height = 220 }: Props) {
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const [playing, setPlaying] = useState(true);
-  const [camera, setCamera] = useState<"front" | "top">("front");
   const playingRef = useRef(playing);
   playingRef.current = playing;
   const cameraRef = useRef(camera);
@@ -77,10 +79,23 @@ export default function VideoPanel({ vehicle, height = 220 }: Props) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  return <canvas ref={canvasRef} width={640} height={height} />;
+}
+
+interface Props {
+  vehicle: VehicleSnap | null;
+  height?: number;
+}
+
+export default function VideoPanel({ vehicle, height = 220 }: Props) {
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [playing, setPlaying] = useState(true);
+  const [camera, setCamera] = useState<"front" | "top">("front");
+
   const vid = vehicle ? vehicle.vehicle_id : "sim-veh-001";
 
   const screenshot = () => {
-    const cv = canvasRef.current;
+    const cv = wrapRef.current ? wrapRef.current.querySelector("canvas") : null;
     if (!cv) return;
     const a = document.createElement("a");
     a.href = cv.toDataURL("image/png");
@@ -89,7 +104,8 @@ export default function VideoPanel({ vehicle, height = 220 }: Props) {
   };
 
   const fullscreen = () => {
-    void canvasRef.current?.requestFullscreen();
+    const cv = wrapRef.current ? wrapRef.current.querySelector("canvas") : null;
+    void cv?.requestFullscreen();
   };
 
   return (
@@ -98,8 +114,8 @@ export default function VideoPanel({ vehicle, height = 220 }: Props) {
         <span>视频监控 · {vid}</span>
         <span className="hint">阶段 1 模拟画面，阶段 2 接 WebRTC 双流</span>
       </div>
-      <div className="video-box">
-        <canvas ref={canvasRef} width={640} height={height} />
+      <div className="video-box" ref={wrapRef}>
+        <SimCamCanvas camera={camera} playing={playing} height={height} />
         <span className="video-meta">{vid} · {camera === "front" ? "前向机位" : "俯视机位"}</span>
         <span className="video-live">{playing ? "LIVE" : "PAUSED"}</span>
       </div>

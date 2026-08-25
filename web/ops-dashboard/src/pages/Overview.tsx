@@ -12,6 +12,8 @@ import GpsMap from "../components/GpsMap";
 import VehicleTable from "../components/VehicleTable";
 import EventFeed from "../components/EventFeed";
 import TerminalPanel from "../components/TerminalPanel";
+import MiniVideos from "../components/MiniVideos";
+import Modal from "../components/Modal";
 import VehicleDetail from "./VehicleDetail";
 
 interface Props {
@@ -119,6 +121,9 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   const [focusNonce, setFocusNonce] = useState(0);
   const [ctxMenu, setCtxMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [confirmDetail, setConfirmDetail] = useState<{ id: string; x: number; y: number } | null>(null);
+  // 远程终端 / 告警与事件 点击标题弹窗放大
+  const [bigTerminal, setBigTerminal] = useState(false);
+  const [bigEvents, setBigEvents] = useState(false);
   const frozenRef = useRef<FleetSnap | null>(null);
 
   // 自动刷新关闭时冻结画面（仍接收数据，只是不渲染新值）
@@ -147,7 +152,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
 
   // 左右浮层两种地图视图共用
   const leftOverlay = (
-    <SideCol id="left" side="left" label="车辆列表 / 告警事件">
+    <SideCol id="left" side="left" label="车辆列表 / 终端 / 告警">
       <CollapsePanel
         id="ov-vehicles"
         title="车辆列表"
@@ -168,13 +173,16 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
           compact
         />
       </CollapsePanel>
-      <EventFeed events={view.events} compact fixed />
+      <div className="ov-split">
+        <TerminalPanel vehicle={selected} fixed onExpand={() => setBigTerminal(true)} />
+        <EventFeed events={view.events} compact fixed onExpand={() => setBigEvents(true)} />
+      </div>
     </SideCol>
   );
   const rightOverlay = (
-    <SideCol id="right" side="right" label="详情 / 终端" open={rightOpen} onOpenChange={setRightOpen}>
+    <SideCol id="right" side="right" label="详情 / 视频" open={rightOpen} onOpenChange={setRightOpen}>
       <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact />
-      <TerminalPanel vehicle={selected} fixed />
+      <MiniVideos vehicle={selected} />
     </SideCol>
   );
 
@@ -221,6 +229,24 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
           )}
         </div>
       </div>
+      {bigTerminal && (
+        <Modal
+          title={"远程终端 · " + (selected ? selected.vehicle_id : "sim-veh-001")}
+          onClose={() => setBigTerminal(false)}
+          width="min(960px, 94vw)"
+        >
+          <div className="big-modal-body" style={{ height: "min(560px, 70vh)" }}>
+            <TerminalPanel vehicle={selected} fixed />
+          </div>
+        </Modal>
+      )}
+      {bigEvents && (
+        <Modal title="告警与事件" onClose={() => setBigEvents(false)} width="min(860px, 94vw)">
+          <div className="big-modal-body" style={{ height: "min(520px, 70vh)" }}>
+            <EventFeed events={view.events} fixed />
+          </div>
+        </Modal>
+      )}
       {ctxMenu && (
         <>
           <div
