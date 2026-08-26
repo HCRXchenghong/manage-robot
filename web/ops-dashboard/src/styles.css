@@ -67,7 +67,7 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 .nav-item:hover { background: var(--panel); color: var(--text); }
-.nav-item.active { background: #14325a; color: #eaf4ff; box-shadow: inset 2px 0 0 var(--accent); }
+.nav-item.active { background: #14325a; color: #eaf4ff; }
 .nav-icon { width: 20px; text-align: center; font-size: 13px; }
 .sidebar-user {
   display: flex; gap: 10px; align-items: center;
@@ -277,7 +277,7 @@ select.input { appearance: auto; }
 .mini-video { position: relative; min-width: 0; }
 .mini-video canvas {
   display: block; width: 100%; height: auto;
-  border-radius: 6px; border: 1px solid var(--border); background: #05080f;
+  border-radius: 6px; background: #05080f;
 }
 .mini-video .video-meta { left: 6px; top: 5px; font-size: 10px; }
 /* 放大弹窗内容：面板撑满弹窗高度 */
@@ -285,6 +285,9 @@ select.input { appearance: auto; }
 .big-modal-body .panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 /* 点击任意空白处弹窗放大 */
 .ov-click { cursor: pointer; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+/* 右列详情卡按内容自适应，避免 kv 行被等分高度裁掉 */
+.ov-fit { flex: 0 0 auto; }
+.ov-fit .panel { flex: 0 0 auto; }
 /* 面板内容层撑满（视频/终端/事件在浮层里按 flex 伸展） */
 .map-overlay .panel > div:last-child { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .mini-videos { flex: 1; height: auto; }
@@ -333,16 +336,16 @@ select.input { appearance: auto; }
 .sig-table th, .sig-table td { padding: 5px 10px; border-bottom: 1px solid rgba(26,39,69,.6); }
 .sig-table th { color: var(--text-dim); text-align: left; position: sticky; top: 0; background: #0b1220; }
 .sig-table .dim { color: var(--text-dim); }
-/* 事件行 UI：按级别左侧色条 + 圆角 + hover */
-.event { border-left: 3px solid transparent; border-bottom: 1px solid rgba(26,39,69,.55); border-radius: 6px; padding: 6px 8px; margin: 2px 0; }
+/* 事件行 UI：圆角 + hover，级别用淡底色区分（不加左侧色条） */
+.event { border-bottom: 1px solid rgba(26,39,69,.55); border-radius: 6px; padding: 6px 8px; margin: 2px 0; }
 .event:hover { background: rgba(33,150,243,.06); }
-.evt-info { border-left-color: #38bdf8; }
-.evt-warn { border-left-color: #eab308; background: rgba(234,179,8,.05); }
-.evt-critical { border-left-color: #ef4444; background: rgba(239,68,68,.07); }
+.evt-info { background: rgba(56,189,248,.05); }
+.evt-warn { background: rgba(234,179,8,.05); }
+.evt-critical { background: rgba(239,68,68,.07); }
 /* 双视频上下竖排占满 */
 .mini-videos { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; }
 .mini-video { position: relative; flex: 1; min-height: 0; }
-.mini-video canvas { display: block; width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--border); background: #05080f; }
+.mini-video canvas { display: block; width: 100%; height: 100%; border-radius: 6px; background: #05080f; }
 .mini-video .video-meta { left: 6px; top: 5px; font-size: 10px; }
 .lidar-hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); font-size: 11px;
@@ -621,11 +624,14 @@ select.input { appearance: auto; }
 .twin-col { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; }
 .twin-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: rgba(10,16,30,.6); }
 .twin-card-t { font-size: 12px; font-weight: 700; margin-bottom: 8px; color: var(--text-dim); }
+.twin-col .ov-click { flex: none; }
+.twin-dials .dial svg { max-width: 132px; }
+.kv-list { margin-top: 8px; }
 .twin-dials { display: flex; gap: 8px; justify-content: space-around; }
-.twin-sig { flex: 1; min-height: 120px; display: flex; flex-direction: column; }
-.twin-sig .sig-table-wrap { flex: 1; max-height: none; }
-.twin-term { flex: 1; min-height: 160px; display: flex; flex-direction: column; }
-.twin-term .term-box { flex: 1; min-height: 120px; }
+.twin-sig { display: flex; flex-direction: column; }
+.twin-sig .sig-table-wrap { max-height: 240px; border: none; }
+.twin-term { display: flex; flex-direction: column; }
+.twin-term .term-box { flex: none; height: 150px; min-height: 0; border: none; }
 .twin-center { position: relative; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: radial-gradient(800px 500px at 50% 40%, rgba(20,40,70,.5), transparent 70%); }
 .twin-model { position: absolute; inset: 0; }
 .twin-model .model-overlay { position: absolute; inset: 0; pointer-events: none; }

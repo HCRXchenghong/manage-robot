@@ -212,7 +212,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   );
   const rightOverlay = (
     <SideCol id="right" side="right" label="详情 / 视频" open={rightOpen} onOpenChange={setRightOpen}>
-      <div className="ov-click" onClick={openIfPlain(() => setBigDetail(true))}>
+      <div className="ov-click ov-fit" onClick={openIfPlain(() => setBigDetail(true))}>
         <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact onExpand={() => setBigDetail(true)} />
       </div>
       <div className="ov-click" onClick={openIfPlain(() => setBigVideo(true))}>

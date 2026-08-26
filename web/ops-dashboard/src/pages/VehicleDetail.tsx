@@ -58,11 +58,11 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact, onExp
           )}
         </div>
         {compact && <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} small />}
-        <div className="kv">
-          <span className="k">在线</span><span>{v.online ? "是" : "否（心跳龄 " + v.last_heartbeat_age_s.toFixed(1) + "s）"}</span>
-          <span className="k">模式</span><span>{MODE_LABEL[v.mode] || v.mode || "-"}</span>
-          <span className="k">挡位 / 转向</span><span className="mono">{v.gear || "-"} · {v.steer_rad.toFixed(3)} rad</span>
-          <span className="k">位姿</span><span className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</span>
+        <div className="kv-list">
+          <div className="kv"><span>在线</span><b>{v.online ? "是" : "否（心跳龄 " + v.last_heartbeat_age_s.toFixed(1) + "s）"}</b></div>
+          <div className="kv"><span>模式</span><b>{MODE_LABEL[v.mode] || v.mode || "-"}</b></div>
+          <div className="kv"><span>挡位 / 转向</span><b className="mono">{v.gear || "-"} · {v.steer_rad.toFixed(3)} rad</b></div>
+          <div className="kv"><span>位姿</span><b className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</b></div>
         </div>
       {!compact && (
         <div className="panel" style={{ marginTop: 12 }}>

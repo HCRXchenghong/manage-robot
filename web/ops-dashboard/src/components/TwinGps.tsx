@@ -20,7 +20,8 @@ function loadAMap(key: string): Promise<AMapNS> {
   return amapPromise;
 }
 
-export default function TwinGps({ vehicle }: { vehicle: VehicleSnap }) {
+// height：卡片默认 150，弹窗放大时传更大值
+export default function TwinGps({ vehicle, height = 150 }: { vehicle: VehicleSnap; height?: number }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<AMapNS>(null);
   const markerRef = useRef<AMapNS>(null);
@@ -65,7 +66,7 @@ export default function TwinGps({ vehicle }: { vehicle: VehicleSnap }) {
       <div className="twin-card-t">GPS定位</div>
       <div
         ref={boxRef}
-        style={{ height: 150, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)", background: "#0a1020", position: "relative" }}
+        style={{ height, borderRadius: 8, overflow: "hidden", background: "#0a1020", position: "relative" }}
       >
         {!g.fix && (
           <div className="muted" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>

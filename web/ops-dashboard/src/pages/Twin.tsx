@@ -1,13 +1,17 @@
 // 数字孪生车辆详情页：独立页面（无侧栏/顶栏），新标签页打开，等保三级会话鉴权。
 // 布局对齐桌面「数字孪生」参考图：左 数据面板 / 中 GLB 模型 / 右 点云+GPS+视频+终端，全部接真实接口。
 import { useEffect, useState } from "react";
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { fetchMe, useFleet } from "../api";
 import { BarGauge, DialGauge, SignalTable } from "../components/DashGauges";
 import MiniVideos from "../components/MiniVideos";
+import Modal from "../components/Modal";
 import TerminalPanel from "../components/TerminalPanel";
 import TwinGps from "../components/TwinGps";
 import TwinModel from "../components/TwinModel";
 import TwinRadar from "../components/TwinRadar";
+import VideoPanel from "../components/VideoPanel";
+import { VehicleDashboard } from "./VehicleDetail";
 import type { Me } from "../types";
 
 export default function Twin({ vehicleId }: { vehicleId: string }) {
@@ -22,6 +26,18 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
   }, []);
 
   const v = fleet.snap.vehicles.find((x) => x.vehicle_id === vehicleId) || null;
+
+  const [bigDash, setBigDash] = useState(false);
+  const [bigRadar, setBigRadar] = useState(false);
+  const [bigGps, setBigGps] = useState(false);
+  const [bigVideo, setBigVideo] = useState(false);
+  const [bigTerm, setBigTerm] = useState(false);
+  // 点击任意非交互区域弹窗放大（与总览大屏的 ov-click 体验一致）
+  const openIfPlain = (fn: () => void) => (e: ReactMouseEvent) => {
+    const t = e.target as HTMLElement;
+    if (t.closest("button, select, input, a, textarea, tr, .term-box.live")) return;
+    fn();
+  };
 
   const back = () => {
     if (window.history.length > 1) window.history.back();
@@ -79,6 +95,7 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
       </header>
       <div className="twin-body">
         <aside className="twin-col twin-left">
+          <div className="ov-click" onClick={openIfPlain(() => setBigDash(true))}>
           <div className="twin-card">
             <div className="twin-card-t">机内环境</div>
             <BarGauge label="机内温度" value={v.cabin_temp_c ?? 26} min={0} max={50} unit="°C" color="#f59e0b" />
@@ -103,34 +120,74 @@ export default function Twin({ vehicleId }: { vehicleId: string }) {
               <b className="mono">{v.last_heartbeat_age_s.toFixed(1)} s</b>
             </div>
           </div>
-          <div className="twin-card twin-dials">
-            <div className="twin-card-t" style={{ width: "100%" }}>行驶仪表</div>
+          <div className="twin-card">
+            <div className="twin-card-t">行驶仪表</div>
+            <div className="twin-dials">
             <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
             <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
+            </div>
           </div>
           <div className="twin-card twin-sig">
             <div className="twin-card-t">实时信号表</div>
             <SignalTable v={v} />
+          </div>
           </div>
         </aside>
         <main className="twin-center">
           <TwinModel vehicleId={v.vehicle_id} powered={v.online} />
         </main>
         <aside className="twin-col twin-right">
-          <div className="twin-card">
-            <TwinRadar vehicle={v} />
+          <div className="ov-click" onClick={openIfPlain(() => setBigRadar(true))}>
+            <div className="twin-card">
+              <TwinRadar vehicle={v} />
+            </div>
           </div>
-          <div className="twin-card">
-            <TwinGps vehicle={v} />
+          <div className="ov-click" onClick={openIfPlain(() => setBigGps(true))}>
+            <div className="twin-card">
+              <TwinGps vehicle={v} />
+            </div>
           </div>
-          <div className="twin-card">
-            <MiniVideos vehicle={v} />
+          <div className="ov-click" onClick={openIfPlain(() => setBigVideo(true))}>
+            <div className="twin-card">
+              <MiniVideos vehicle={v} single onExpand={() => setBigVideo(true)} />
+            </div>
           </div>
-          <div className="twin-card twin-term">
-            <TerminalPanel vehicle={v} fixed />
+          <div className="ov-click" onClick={openIfPlain(() => setBigTerm(true))}>
+            <div className="twin-card twin-term">
+              <TerminalPanel vehicle={v} fixed onExpand={() => setBigTerm(true)} />
+            </div>
           </div>
         </aside>
       </div>
+      {bigDash && (
+        <Modal title={"车辆详情 · " + v.vehicle_id} onClose={() => setBigDash(false)} width="min(980px, 94vw)">
+          <VehicleDashboard v={v} />
+        </Modal>
+      )}
+      {bigRadar && (
+        <Modal title={"激光点云 · " + v.vehicle_id} onClose={() => setBigRadar(false)} width="min(760px, 92vw)">
+          <TwinRadar vehicle={v} large />
+        </Modal>
+      )}
+      {bigGps && (
+        <Modal title={"GPS定位 · " + v.vehicle_id} onClose={() => setBigGps(false)} width="min(760px, 92vw)">
+          <TwinGps vehicle={v} height={420} />
+        </Modal>
+      )}
+      {bigVideo && (
+        <Modal title={"视频监控 · " + v.vehicle_id} onClose={() => setBigVideo(false)} width="min(860px, 94vw)">
+          <div className="big-modal-body" style={{ height: "min(540px, 70vh)" }}>
+            <VideoPanel vehicle={v} height={380} />
+          </div>
+        </Modal>
+      )}
+      {bigTerm && (
+        <Modal title={"远程终端 · " + v.vehicle_id} onClose={() => setBigTerm(false)} width="min(960px, 94vw)">
+          <div className="big-modal-body" style={{ height: "min(560px, 70vh)" }}>
+            <TerminalPanel vehicle={v} fixed />
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

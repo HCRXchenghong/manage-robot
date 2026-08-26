@@ -6,7 +6,8 @@ import type { VehicleSnap } from "../types";
 
 const RANGE = 30; // 视野半径（米）
 
-export default function TwinRadar({ vehicle }: { vehicle: VehicleSnap }) {
+// large：弹窗放大视图用更大的画布分辨率
+export default function TwinRadar({ vehicle, large }: { vehicle: VehicleSnap; large?: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [count, setCount] = useState(0);
 
@@ -94,7 +95,12 @@ export default function TwinRadar({ vehicle }: { vehicle: VehicleSnap }) {
         <span>激光点云</span>
         <span className="mono" style={{ color: "#38bdf8", fontWeight: 400 }}>{count} pts · 0.5 Hz</span>
       </div>
-      <canvas ref={canvasRef} width={300} height={220} style={{ width: "100%", borderRadius: 8, background: "#04070d", border: "1px solid var(--border)" }} />
+      <canvas
+        ref={canvasRef}
+        width={large ? 680 : 300}
+        height={large ? 480 : 220}
+        style={{ width: "100%", borderRadius: 8, background: "#04070d" }}
+      />
     </div>
   );
 }
