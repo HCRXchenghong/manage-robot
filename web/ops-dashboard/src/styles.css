@@ -306,6 +306,26 @@ select.input { appearance: auto; }
 .gear-big-val { font-size: 34px; font-weight: 800; line-height: 1; color: #e2e8f0; background: rgba(8,14,28,.6); border: 1px solid var(--border); border-radius: 12px; padding: 14px 20px; }
 .gear-big-label { font-size: 11px; color: var(--text-dim); }
 .dash-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+/* 总览紧凑卡片：挡位+踏板一行、位姿下操作按钮一行 */
+.compact-pedals-row { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 8px; }
+.compact-pedals-row .gear-big-val { font-size: 22px; padding: 10px 14px; border-radius: 10px; }
+.compact-actions { display: flex; gap: 8px; }
+.compact-actions .btn { flex: 1; }
+/* 紧凑卡单行：表盘+挡位+踏板，省出视频卡空间 */
+.compact-one-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.compact-one-row .dial svg { max-width: 78px; }
+.compact-one-row .dial-sub { display: none; }
+.compact-one-row .gear-big-val { font-size: 19px; padding: 8px 12px; }
+.compact-one-row .pedals.small { gap: 8px; }
+.compact-one-row .pedals.small .pedal-bar { height: 56px; width: 24px; }
+/* 右列固定高度内省空间：保证急停/接管按钮与视频卡都可见 */
+.ov-fit .compact-gauges .dial svg { max-width: 100px; }
+.ov-fit .pedals.small .pedal-bar { height: 60px; width: 26px; }
+.ov-fit .kv { padding: 2px 0; }
+.ov-fit .kv-list { margin-top: 4px; }
+.ov-fit .compact-pedals-row { margin-top: 6px; gap: 12px; }
+.ov-fit .compact-pedals-row .gear-big-val { font-size: 19px; padding: 8px 12px; }
+.ov-fit .compact-actions { margin-top: 6px; }
 .btn.estop-arm { animation: estop-pulse .8s infinite; }
 @keyframes estop-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.5); } 50% { box-shadow: 0 0 0 6px rgba(239,68,68,0); } }
 .dial { position: relative; text-align: center; min-width: 0; }
@@ -636,6 +656,7 @@ select.input { appearance: auto; }
 .twin-col .ov-click { flex: none; }
 .twin-dials .dial svg { max-width: 132px; }
 .kv-list { margin-top: 8px; }
+.kv-list .kv { margin-bottom: 2px; }
 .twin-dials { display: flex; gap: 8px; justify-content: space-around; }
 .twin-sig { display: flex; flex-direction: column; }
 .twin-sig .sig-table-wrap { max-height: 240px; border: none; }
@@ -677,3 +698,72 @@ tr.evt-warn td:first-child { box-shadow: inset 3px 0 0 #eab308; }
 .ov-split .event { padding: 3px 6px; }
 .ov-split .event-text { font-size: 11px; }
 .ov-split .event-time { font-size: 10px; }
+
+/* ---------- 远程终端页 ---------- */
+.terminal-page { display: flex; flex-direction: column; height: 100%; gap: 10px; }
+.term-main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.term-main .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.term-main .panel .term-box { flex: 1; }
+/* CollapsePanel 内容包裹层撑满，终端才能填满面板（终端页 / 独立终端页共用） */
+.term-main .panel > div:last-child,
+.termwin-body .panel > div:last-child {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.term-setup-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.term-setup-row select { min-width: 200px; }
+.term-popbar {
+  display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  padding: 6px 10px; border: 1px solid #f59e0b; border-radius: 8px;
+  background: rgba(245,158,11,.08); font-size: 12px; color: #fbbf24;
+}
+.term-popbar span { flex: 1; }
+
+/* ---------- 独立车端终端页（#/termwin/:id） ---------- */
+.termwin-body { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 14px; gap: 10px; }
+.termwin-body .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.termwin-body .panel .term-box { flex: 1; }
+
+/* ---------- RViz 可视化页（#/rviz） ---------- */
+.rviz-root { position: fixed; inset: 0; display: flex; flex-direction: column; background: #05070d; z-index: 5; color: #c9d4e3; }
+.rviz-root .twin-auth { margin: auto; text-align: center; padding: 30px; border: 1px solid var(--border); border-radius: 12px; max-width: 440px; }
+.rviz-root .muted { color: #8fa3c8; }
+.rviz-head { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--border); background: #0b1220; }
+.rviz-head h1 { margin: 0; font-size: 15px; font-weight: 700; color: #e2ecff; }
+.rviz-logo {
+  width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, #ef4444, #f59e0b); color: #fff; font-weight: 800; font-size: 14px;
+}
+.rviz-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; border-bottom: 1px solid var(--border); background: #0b1220; }
+.rvz-btn {
+  background: #141c2e; color: #cfe0f8; border: 1px solid var(--border); border-radius: 6px;
+  padding: 3px 9px; font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.rvz-btn:hover { border-color: #35507e; background: #1b2a4a; }
+.rvz-btn.active { background: #1d4ed8; border-color: #2563eb; color: #fff; }
+.rvz-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.rviz-body { flex: 1; display: flex; min-height: 0; }
+.rviz-left { width: 300px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: #0b1220; overflow-y: auto; }
+.rviz-sec-t { padding: 7px 10px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: #7d90b3; border-bottom: 1px solid var(--border); background: #0e1730; }
+.rviz-tree { display: flex; flex-direction: column; }
+.rv-row { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid rgba(34,48,79,.5); cursor: pointer; font-size: 12px; }
+.rv-row:hover { background: rgba(56,189,248,.06); }
+.rv-row.sel { background: rgba(56,189,248,.12); }
+.rv-row input[type="checkbox"] { accent-color: #38bdf8; }
+.rv-row .rv-name { flex: 1; }
+.rv-row .rv-status { font-size: 10px; color: #4ade80; }
+.rviz-props { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.rv-prop { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cfe0f8; }
+.rv-prop span { color: #7d90b3; min-width: 74px; flex: 0 0 auto; }
+.rv-prop input[type="range"] { flex: 1; accent-color: #38bdf8; }
+.rviz-view { flex: 1; position: relative; min-width: 0; }
+.rviz-view.placing { cursor: crosshair; }
+.rviz-viewport-hint {
+  position: absolute; left: 10px; bottom: 10px; display: flex; gap: 14px; font-size: 11px;
+  padding: 4px 10px; border-radius: 6px; background: rgba(5,8,15,.6); border: 1px solid var(--border); color: #9fb2d4;
+}
+.rviz-right { width: 200px; flex: 0 0 auto; border-left: 1px solid var(--border); background: #0b1220; overflow-y: auto; }
+.rviz-status { display: flex; align-items: center; gap: 20px; padding: 6px 14px; border-top: 1px solid var(--border); background: #0b1220; font-size: 11px; color: #8fa3c8; }
+.rviz-status b { color: #cfe0f8; font-weight: 600; }
+.rviz-status .spacer { flex: 1; }
+@media (max-width: 1100px) { .rviz-right { display: none; } }
+@media (max-width: 900px) { .rviz-left { width: 240px; } }

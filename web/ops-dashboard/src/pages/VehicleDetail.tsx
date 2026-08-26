@@ -54,32 +54,83 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact, onExp
       title={"车辆详情 · " + v.vehicle_id}
       hint={STATUS_LABEL[vehicleStatusOf(v)] + " · " + (MODE_LABEL[v.mode] || v.mode || "-")}
     >
-        <div className={"compact-gauges" + (compact ? "" : " dash-gauges")}>
-          <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
-          <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
-          {!compact && (
-            <>
-              <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} />
-              <div className="dash-bars">
-                <BarGauge label="机内温度" value={v.cabin_temp_c ?? 26} min={0} max={50} unit="°C" color="#f59e0b" />
-                <BarGauge label="机内湿度" value={v.cabin_humidity_pct ?? 45} min={0} max={100} unit="%" color="#38bdf8" digits={0} />
-              </div>
-            </>
-          )}
-        </div>
-        {compact && <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} small />}
+        {compact ? (
+          <div className="compact-one-row">
+            <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
+            <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
+            <GearBig gear={v.gear} />
+            <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} small />
+          </div>
+        ) : (
+          <div className="compact-gauges dash-gauges">
+            <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
+            <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
+            <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} />
+            <div className="dash-bars">
+              <BarGauge label="机内温度" value={v.cabin_temp_c ?? 26} min={0} max={50} unit="°C" color="#f59e0b" />
+              <BarGauge label="机内湿度" value={v.cabin_humidity_pct ?? 45} min={0} max={100} unit="%" color="#38bdf8" digits={0} />
+            </div>
+          </div>
+        )}
         <div className="kv-list">
           <div className="kv"><span>在线</span><b>{v.online ? "是" : "否（心跳龄 " + v.last_heartbeat_age_s.toFixed(1) + "s）"}</b></div>
           <div className="kv"><span>模式</span><b>{MODE_LABEL[v.mode] || v.mode || "-"}</b></div>
-          <div className="kv"><span>挡位 / 转向</span><b className="mono">{v.gear || "-"} · {v.steer_rad.toFixed(3)} rad</b></div>
+          <div className="kv"><span>转向</span><b className="mono">{v.steer_rad.toFixed(3)} rad</b></div>
           <div className="kv"><span>位姿</span><b className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</b></div>
         </div>
+        {compact && (
+          <div className="btn-row mt compact-actions">
+            <EstopTakeoverButtons vehicleId={v.vehicle_id} small />
+          </div>
+        )}
       {!compact && (
         <div className="panel" style={{ marginTop: 12 }}>
           <VideoPanel vehicle={v} height={200} />
         </div>
       )}
     </CollapsePanel>
+  );
+}
+
+// 大挡位显示（弹窗仪表盘与总览紧凑卡片共用）
+function GearBig({ gear }: { gear: string }) {
+  return (
+    <div className="gear-big">
+      <div className="gear-big-val">{gear || "D"}</div>
+      <div className="gear-big-label">挡位</div>
+    </div>
+  );
+}
+
+// 急停 + 远程接管按钮组（弹窗仪表盘与总览紧凑卡片共用）：
+// 急停两步确认防误触；远程接管弹账号级接管快捷弹窗。
+function EstopTakeoverButtons({ vehicleId, small }: { vehicleId: string; small?: boolean }) {
+  const [armEstop, setArmEstop] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [tkOpen, setTkOpen] = useState(false);
+
+  const onEstop = () => {
+    if (!armEstop) {
+      setArmEstop(true);
+      window.setTimeout(() => setArmEstop(false), 3000);
+      return;
+    }
+    setArmEstop(false);
+    emergencyStop()
+      .then((r) => setMsg("紧急停车 " + (r.ok ? "已下发并被接受" : "失败：" + String(r.error || r.ack || ""))))
+      .catch((e) => setMsg("紧急停车失败：" + String(e)));
+  };
+
+  const sz = small ? " small" : "";
+  return (
+    <>
+      <button className={"btn danger" + sz + (armEstop ? " estop-arm" : "")} onClick={onEstop}>
+        {armEstop ? "再次点击确认急停！" : "急停"}
+      </button>
+      <button className={"btn primary" + sz} onClick={() => setTkOpen(true)}>远程接管</button>
+      {msg && <span className="muted" style={{ fontSize: 11 }}>{msg}</span>}
+      {tkOpen && <TakeoverQuickModal vehicleId={vehicleId} onClose={() => setTkOpen(false)} />}
+    </>
   );
 }
 
@@ -193,23 +244,6 @@ function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose
 
 // 弹窗大仪表盘：状态徽章 + 急停/远程接管按钮 + 车速/电量表盘 + 大挡位 + 踏板 + 温湿度条 + 加速度曲线 + 实时信号表
 export function VehicleDashboard({ v }: { v: VehicleSnap }) {
-  const [armEstop, setArmEstop] = useState(false);
-  const [msg, setMsg] = useState("");
-  const [tkOpen, setTkOpen] = useState(false);
-
-  // 急停两步确认：第一次点亮 3 秒窗口，第二次真正下发（防误触）
-  const onEstop = () => {
-    if (!armEstop) {
-      setArmEstop(true);
-      window.setTimeout(() => setArmEstop(false), 3000);
-      return;
-    }
-    setArmEstop(false);
-    emergencyStop()
-      .then((r) => setMsg("紧急停车 " + (r.ok ? "已下发并被接受" : "失败：" + String(r.error || r.ack || ""))))
-      .catch((e) => setMsg("紧急停车失败：" + String(e)));
-  };
-
   return (
     <div className="dash">
       <div className="dash-chips">
@@ -217,20 +251,13 @@ export function VehicleDashboard({ v }: { v: VehicleSnap }) {
         <span className="chip">{MODE_LABEL[v.mode] || v.mode || "-"}</span>
         <span className="chip mono">位姿 x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</span>
         <span className="dash-actions">
-          <button className={"btn small danger" + (armEstop ? " estop-arm" : "")} onClick={onEstop}>
-            {armEstop ? "再次点击确认急停！" : "急停"}
-          </button>
-          <button className="btn small primary" onClick={() => setTkOpen(true)}>远程接管</button>
+          <EstopTakeoverButtons vehicleId={v.vehicle_id} small />
         </span>
       </div>
-      {msg && <div className="muted" style={{ fontSize: 11, marginTop: -6 }}>{msg}</div>}
       <div className="dash-gauges">
         <DialGauge value={v.speed_mps * 3.6} max={60} unit="km/h" label="车速" color="#38bdf8" sub={v.speed_mps.toFixed(2) + " m/s"} />
         <DialGauge value={v.soc * 100} max={100} unit="%" label="电量" color="#22c55e" sub={v.voltage.toFixed(1) + " V"} />
-        <div className="gear-big">
-          <div className="gear-big-val">{v.gear || "D"}</div>
-          <div className="gear-big-label">挡位</div>
-        </div>
+        <GearBig gear={v.gear} />
         <PedalBars throttle={v.throttle_pct || 0} brake={v.brake_pct || 0} />
         <div className="dash-bars">
           <BarGauge label="机内温度" value={v.cabin_temp_c ?? 26} min={0} max={50} unit="°C" color="#f59e0b" />
@@ -239,7 +266,6 @@ export function VehicleDashboard({ v }: { v: VehicleSnap }) {
       </div>
       <AccelChart hist={v.accel_history || []} />
       <SignalTable v={v} showSource />
-      {tkOpen && <TakeoverQuickModal vehicleId={v.vehicle_id} onClose={() => setTkOpen(false)} />}
     </div>
   );
 }
