@@ -312,7 +312,8 @@ select.input { appearance: auto; }
 .compact-actions { display: flex; gap: 8px; }
 .compact-actions .btn { flex: 1; }
 /* 紧凑卡单行：表盘+挡位+踏板，省出视频卡空间 */
-.compact-one-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.compact-one-row { display: flex; align-items: center; justify-content: space-evenly; gap: 12px; }
+.compact-one-row .pedals.small { gap: 12px; }
 .compact-one-row .dial svg { max-width: 78px; }
 .compact-one-row .dial-sub { display: none; }
 .compact-one-row .gear-big-val { font-size: 19px; padding: 8px 12px; }
