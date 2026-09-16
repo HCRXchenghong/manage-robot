@@ -1,134 +1,61 @@
-import { useEffect, useRef, useState } from "react";
+// VideoPanel renders no generated picture. Media becomes visible only after a
+// vehicle media-agent registers a real, authenticated stream.
+import type { CSSProperties } from "react";
 import type { VehicleSnap } from "../types";
 
-// 阶段 1：模拟画面（canvas 动效）。阶段 2 换 media-control 的 WebRTC 真实流，
-// 组件接口不变（只换 <canvas> 为 <video>）。
+export type CamId = "front" | "rear" | "left" | "right" | "surround" | "top";
+export const CAMS: { id: CamId; label: string }[] = [
+  { id: "front", label: "前向" }, { id: "rear", label: "后向" },
+  { id: "left", label: "左视" }, { id: "right", label: "右视" },
+  { id: "surround", label: "环视" }, { id: "top", label: "鸟瞰" },
+];
+export const CAM_LABEL: Record<CamId, string> = {
+  front: "前向", rear: "后向", left: "左视", right: "右视", surround: "环视", top: "鸟瞰",
+};
 
-// 模拟机位 canvas：总览双视频与视频监控页共用（阶段 2 换 WebRTC 时只改这里）
-export function SimCamCanvas({
-  camera,
-  playing = true,
+export function VideoUnavailable({
+  vehicleID,
+  camera = "front",
+  fill = false,
   height = 220,
 }: {
-  camera: "front" | "top";
-  playing?: boolean;
+  vehicleID?: string;
+  camera?: CamId;
+  fill?: boolean;
   height?: number;
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const playingRef = useRef(playing);
-  playingRef.current = playing;
-  const cameraRef = useRef(camera);
-  cameraRef.current = camera;
-
-  useEffect(() => {
-    const cv = canvasRef.current;
-    if (!cv) return;
-    const ctx = cv.getContext("2d");
-    if (!ctx) return;
-    let raf = 0;
-    let t = 0;
-
-    const draw = () => {
-      const w = cv.width;
-      const h = cv.height;
-      if (playingRef.current) t += 1;
-      // 天空 / 地面
-      const horizon = cameraRef.current === "front" ? h * 0.45 : h * 0.2;
-      const sky = ctx.createLinearGradient(0, 0, 0, horizon);
-      sky.addColorStop(0, "#0a1a33");
-      sky.addColorStop(1, "#12395e");
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, w, horizon);
-      const ground = ctx.createLinearGradient(0, horizon, 0, h);
-      ground.addColorStop(0, "#1b2c22");
-      ground.addColorStop(1, "#0d1512");
-      ctx.fillStyle = ground;
-      ctx.fillRect(0, horizon, w, h - horizon);
-      // 透视车道线
-      ctx.strokeStyle = "rgba(220,230,247,0.55)";
-      ctx.lineWidth = 2;
-      for (let i = -3; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.moveTo(w / 2 + i * w * 0.16, horizon);
-        ctx.lineTo(w / 2 + i * w * 0.9, h);
-        ctx.stroke();
-      }
-      // 移动的虚线路标
-      ctx.strokeStyle = "rgba(56,189,248,0.8)";
-      for (let k = 0; k < 6; k++) {
-        const p = ((t * 4 + k * 90) % (h - horizon)) / (h - horizon);
-        const y = horizon + p * (h - horizon);
-        const scale = p;
-        ctx.lineWidth = 2 + scale * 5;
-        ctx.beginPath();
-        ctx.moveTo(w / 2, y);
-        ctx.lineTo(w / 2, y + 12 + scale * 26);
-        ctx.stroke();
-      }
-      // 远处障碍框
-      const bx = w / 2 + Math.sin(t / 60) * w * 0.1;
-      ctx.fillStyle = "rgba(234,179,8,0.65)";
-      ctx.fillRect(bx - 14, horizon - 16, 28, 16);
-      // 时间戳水印
-      ctx.fillStyle = "rgba(159,211,255,0.9)";
-      ctx.font = "11px monospace";
-      ctx.fillText(new Date().toISOString().replace("T", " ").slice(0, 19), 8, h - 8);
-      raf = requestAnimationFrame(draw);
-    };
-    raf = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  return <canvas ref={canvasRef} width={640} height={height} />;
+  const style: CSSProperties = fill
+    ? { flex: 1, minHeight: 0, width: "100%" }
+    : { height, width: "100%" };
+  return (
+    <div className="video-box" style={{ ...style, display: "grid", placeItems: "center", textAlign: "center", padding: 16 }}>
+      <div>
+        <div style={{ fontWeight: 650, marginBottom: 6 }}>真实视频源未注册</div>
+        <div className="muted" style={{ fontSize: 12, lineHeight: 1.6 }}>
+          {vehicleID ? vehicleID + " · " + CAM_LABEL[camera] + "机位" : CAM_LABEL[camera] + "机位"}<br />
+          请由车端 media-agent 通过受控信令注册 WebRTC/SFU 流后查看。
+        </div>
+      </div>
+    </div>
+  );
 }
 
 interface Props {
   vehicle: VehicleSnap | null;
   height?: number;
+  fill?: boolean;
+  hud?: boolean;
 }
 
-export default function VideoPanel({ vehicle, height = 220 }: Props) {
-  const wrapRef = useRef<HTMLDivElement | null>(null);
-  const [playing, setPlaying] = useState(true);
-  const [camera, setCamera] = useState<"front" | "top">("front");
-
-  const vid = vehicle ? vehicle.vehicle_id : "sim-veh-001";
-
-  const screenshot = () => {
-    const cv = wrapRef.current ? wrapRef.current.querySelector("canvas") : null;
-    if (!cv) return;
-    const a = document.createElement("a");
-    a.href = cv.toDataURL("image/png");
-    a.download = vid + "-" + Date.now() + ".png";
-    a.click();
-  };
-
-  const fullscreen = () => {
-    const cv = wrapRef.current ? wrapRef.current.querySelector("canvas") : null;
-    void cv?.requestFullscreen();
-  };
-
+export default function VideoPanel({ vehicle, height = 220, fill = false, hud = false }: Props) {
+  const vehicleID = vehicle?.vehicle_id;
   return (
-    <div style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
+    <div className={hud ? "vp-hud" : ""} style={{ display: "flex", flexDirection: "column", minHeight: 0, flex: 1 }}>
       <div className="panel-title">
-        <span>视频监控 · {vid}</span>
-        <span className="hint">阶段 1 模拟画面，阶段 2 接 WebRTC 双流</span>
+        <span>{hud ? "实时驾驶视频" : "视频监控"}{vehicleID ? " · " + vehicleID : ""}</span>
+        <span className="hint">媒体控制面未注册真实流</span>
       </div>
-      <div className="video-box" ref={wrapRef}>
-        <SimCamCanvas camera={camera} playing={playing} height={height} />
-        <span className="video-meta">{vid} · {camera === "front" ? "前向机位" : "俯视机位"}</span>
-        <span className="video-live">{playing ? "LIVE" : "PAUSED"}</span>
-      </div>
-      <div className="btn-row mt">
-        <button className="btn small" onClick={() => setPlaying((p) => !p)}>
-          {playing ? "暂停" : "播放"}
-        </button>
-        <button className="btn small" onClick={fullscreen}>全屏</button>
-        <button className="btn small" onClick={screenshot}>截图</button>
-        <button className="btn small" onClick={() => setCamera((c) => (c === "front" ? "top" : "front"))}>
-          切换机位
-        </button>
-      </div>
+      <VideoUnavailable vehicleID={vehicleID} height={height} fill={fill || hud} />
     </div>
   );
 }

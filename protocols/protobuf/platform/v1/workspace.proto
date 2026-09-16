@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package platform.v1;
+
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
+// 远程维护/工作空间安全消息。终端令牌只能由受信 Authority 签发，
+// 车端 Agent 还必须验证外层 Envelope HMAC；令牌本身不作为控制租约使用。
+message TerminalGrant {
+  uint32 version = 1;
+  string vehicle_id = 2;
+  string gateway_id = 3;
+  string session_id = 4;
+  bytes terminal_token = 5;
+  string driver_id = 6;
+  string device_id = 7;
+  int64 valid_until_unix_ns = 8;
+  int64 issued_at_unix_ns = 9;
+  string authority_key_id = 10;
+  bytes authority_signature = 11;
+}
+
+message WorkspaceData {
+  string session_id = 1;
+  uint64 sequence = 2;
+  bytes data = 3;
+}
+
+message WorkspaceClose {
+  string session_id = 1;
+  string reason = 2;
+}

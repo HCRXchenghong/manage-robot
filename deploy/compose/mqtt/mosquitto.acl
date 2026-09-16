@@ -1,0 +1,22 @@
+# Mosquitto ACL：mTLS 身份（证书 CN）即 MQTT username。
+#
+# 生产 Gateway 证书要求：CN=<gateway_id>，URI SAN 为
+# spiffe://robot-agent/vehicle/<vehicle_id>/gateway/<gateway_id>。
+# Fleet-hub access 客户端证书的开发 CN 为 vehicle-access；它只拥有聚合上行和投递签名
+# LeaseGrant 的权限，不能代表任一 Gateway 发布遥测。
+
+user vehicle-access
+topic read gateway/+/vehicle/+/+
+topic write gateway/+/lease
+topic write gateway/+/workspace
+topic write gateway/+/navigation
+topic write gateway/+/map
+
+# %u 是当前 mTLS 证书身份。Gateway 只能发布到自己的 namespace，并且
+# 只能读取发给自己的签名 LeaseGrant。Fleet-hub 还会对 vehicle_id/gateway_id
+# 与 PostgreSQL registry 做第二次校验。
+pattern write gateway/%u/vehicle/+/+
+pattern read gateway/%u/lease
+pattern read gateway/%u/workspace
+pattern read gateway/%u/navigation
+pattern read gateway/%u/map

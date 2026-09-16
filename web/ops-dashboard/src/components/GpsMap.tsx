@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { FleetSnap } from "../types";
 import { vehicleStatusOf } from "./VehicleTable";
+import { attachAMapPinch } from "./amapPinch";
 
 const STATUS_CSS: Record<string, string> = {
   driving: "#22c55e",
@@ -83,7 +84,6 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
   const linesRef = useRef<Record<string, AM>>({});
   const ptsRef = useRef<Record<string, [number, number][]>>({});
   const readyRef = useRef(false);
-  const lastDragRef = useRef(0);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(follow);
   followRef.current = follow;
@@ -102,6 +102,7 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
   // 初始化 / key 变化时重建
   useEffect(() => {
     let disposed = false;
+    let detachPinch: (() => void) | null = null;
     const init = () => {
       if (disposed || !boxRef.current) return;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,9 +116,17 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
         center: [116.397, 39.908],
         viewMode: "2D",
         mapStyle: "amap://styles/dark",
+        dragEnable: true,
+        scrollWheel: true,
+        touchZoom: true,
+        doubleClickZoom: true,
+        animateEnable: true,
       });
-      map.on("dragstart", () => (lastDragRef.current = Date.now()));
+      map.on("dragstart", () => {
+        setFollow(false);
+      });
       mapRef.current = map;
+      detachPinch = attachAMapPinch(boxRef.current, map);
       readyRef.current = true;
       setSat(false);
       satLayersRef.current = [];
@@ -152,6 +161,10 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
     document.head.appendChild(s);
     const onCfg = () => {
       // 实时修改 key：销毁后走一次重载流程
+      if (detachPinch) {
+        detachPinch();
+        detachPinch = null;
+      }
       if (mapRef.current) {
         try {
           mapRef.current.destroy();
@@ -174,6 +187,7 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
     return () => {
       disposed = true;
       window.removeEventListener("ra-cfg-changed", onCfg);
+      if (detachPinch) detachPinch();
       if (mapRef.current) {
         try {
           mapRef.current.destroy();
@@ -241,7 +255,7 @@ export default function GpsMap({ snap, selectedId, onSelect, onContext, focusNon
       if (v.vehicle_id === selectedRef.current) focus = p;
       setCoordText(v.gps.lat.toFixed(6) + ", " + v.gps.lon.toFixed(6) + " · 海拔 " + v.gps.alt.toFixed(1) + " m");
     }
-    if (focus && followRef.current && Date.now() - lastDragRef.current > 8000) {
+    if (focus && followRef.current) {
       map.setCenter(focus);
     }
   }, [snap]);

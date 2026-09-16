@@ -33,6 +33,49 @@ signals:
     safety: safety_relevant
     missing: 视为 0，触发最小风险评估
 
+  Platform.Autonomy.Localization.Pose.Valid:
+    datatype: boolean
+    update: 10Hz
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: safety_relevant
+    missing: 视为无定位，运营地图不得渲染车辆位置
+
+  Platform.Autonomy.Localization.Pose.Frame:
+    datatype: string           # map | odom；坐标值必须与该 frame 对应
+    update: on_change
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: informational
+    missing: 不得假设坐标系
+
+  Platform.Autonomy.Localization.Pose.X:
+    datatype: float
+    unit: m
+    update: 10Hz
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: safety_relevant
+    missing: 视为无定位
+
+  Platform.Autonomy.Localization.Pose.Y:
+    datatype: float
+    unit: m
+    update: 10Hz
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: safety_relevant
+    missing: 视为无定位
+
+  Platform.Autonomy.Localization.Pose.Yaw:
+    datatype: float
+    unit: rad
+    update: 10Hz
+    source: vehicle/adapters（定位模块）
+    writable: false
+    safety: safety_relevant
+    missing: 视为无定位
+
   Platform.Autonomy.Planning.State:
     datatype: string           # idle | planning | executing | fault
     update: on_change
@@ -52,7 +95,7 @@ signals:
   Platform.RemoteDriving.Lease.State:
     datatype: string           # none | pending | granted | expired
     update: on_change
-    source: server/control-authority + vehicle/safety-arbiter
+    source: server/fleet/durable_authority.go + vehicle/safety-arbiter
     writable: false
     safety: safety_relevant
     missing: 视为 none

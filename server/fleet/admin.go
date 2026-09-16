@@ -7,6 +7,7 @@ package main
 //   user         无管理面
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -40,15 +41,11 @@ func registerAuthRoutes(mux *http.ServeMux, svc *Services) {
 			return
 		}
 		phone, _ := body["phone"].(string)
-		code, err := svc.auth.SendSmsCode(phone)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		if !validCNPhone(phone) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "手机号格式不正确"})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": true, "demo_code": code,
-			"note": "演示环境未接短信网关，验证码直接展示；生产环境经短信下发",
-		})
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "短信网关尚未配置；验证码不会在平台返回或展示"})
 	})
 	mux.HandleFunc("POST /api/auth/login-phone", func(w http.ResponseWriter, r *http.Request) {
 		body := readJSONBody(w, r)
@@ -99,7 +96,7 @@ func registerAuthRoutes(mux *http.ServeMux, svc *Services) {
 		svc.auth.Logout(r)
 		http.SetCookie(w, &http.Cookie{Name: "ra_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 		if sess != nil && svc.auth.st != nil {
-			svc.auth.st.pushEvent("info", "", "用户登出："+sess.Username)
+			svc.auth.st.pushEvent("info", "", "用户登出："+sess.Username, "sys")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -301,7 +298,7 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 			}
 		}
 		if svc.auth.st != nil {
-			svc.auth.st.pushEvent("info", "", "新建账号："+u.Username+"（"+role+"）by "+sess.Username)
+			svc.auth.st.pushEvent("info", "", "新建账号："+u.Username+"（"+role+"）by "+sess.Username, "sys")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": u})
 	})
@@ -357,7 +354,7 @@ func registerAdminRoutes(mux *http.ServeMux, svc *Services) {
 			return
 		}
 		if svc.auth.st != nil {
-			svc.auth.st.pushEvent("warn", "", "删除账号："+r.PathValue("name")+" by "+sess.Username)
+			svc.auth.st.pushEvent("warn", "", "删除账号："+r.PathValue("name")+" by "+sess.Username, "sys")
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
@@ -382,20 +379,6 @@ func intOf(v any) int {
 		return n
 	}
 	return 0
-}
-
-func strSliceOf(v any) []string {
-	arr, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(arr))
-	for _, x := range arr {
-		if s, ok := x.(string); ok && s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 // ListUsers 按用户名排序输出（不含敏感字段，PassHash/Salt 带 json:"-"）。
@@ -519,6 +502,9 @@ func (a *AuthStore) CreateUser(username, display, pwd, role string, groups []str
 		PassHash: hashPassword(salt, pwd), Salt: salt,
 		CreatedNS: time.Now().UnixNano(), PassSetNS: time.Now().UnixNano(),
 	}
+	if err := a.persistUserLocked(u); err != nil {
+		return nil, fmt.Errorf("保存账号失败: %w", err)
+	}
 	a.users[username] = u
 	return u, nil
 }
@@ -544,14 +530,20 @@ func (a *AuthStore) SetGroups(actor *Session, username string, groups []string) 
 	}
 	a.mu.Unlock()
 
-	// 复用建号时的配额校验：模拟该角色在这些分组中 +1
+	// 复用建号时的配额校验：计算该角色加入这些分组后的占用数
 	tmp := &User{Username: u.Username + "#tmp", Role: u.Role, Groups: groups}
 	if err := a.checkQuotaFor(tmp, u); err != nil {
 		return nil, err
 	}
 	a.mu.Lock()
+	oldGroups := append([]string(nil), u.Groups...)
 	u.Groups = groups
 	role := u.Role
+	if err := a.persistUserLocked(u); err != nil {
+		u.Groups = oldGroups
+		a.mu.Unlock()
+		return nil, fmt.Errorf("保存分组失败: %w", err)
+	}
 	a.mu.Unlock()
 	a.RefreshSessions(username, groups, role)
 	return u, nil
@@ -616,8 +608,12 @@ func (a *AuthStore) ResetPassword(actor *Session, username, pwd string, r *http.
 	u.PassSetNS = time.Now().UnixNano()
 	u.FailCount = 0
 	u.LockedUntil = 0
+	if err := a.persistUserLocked(u); err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("保存密码失败: %w", err)
+	}
 	a.mu.Unlock()
-	a.KillSessions(username, "")
+	a.killSessions(username, "", actor.Username, "auth.password_reset")
 	return nil
 }
 
@@ -646,9 +642,15 @@ func (a *AuthStore) DeleteUser(actor *Session, username string) error {
 		a.mu.Unlock()
 		return errNew("至少要保留一名超级管理员")
 	}
+	if a.db != nil {
+		if _, err := a.db.Exec("DELETE FROM auth_users WHERE username=$1", username); err != nil {
+			a.mu.Unlock()
+			return fmt.Errorf("删除账号失败: %w", err)
+		}
+	}
 	delete(a.users, username)
 	a.mu.Unlock()
-	a.KillSessions(username, "")
+	a.killSessions(username, "", actor.Username, "auth.user_deleted")
 	return nil
 }
 
@@ -663,7 +665,7 @@ func (a *AuthStore) ChangePassword(sess *Session, old, nw string, r *http.Reques
 		a.mu.Unlock()
 		return errNew("用户不存在")
 	}
-	if hashPassword(u.Salt, old) != u.PassHash {
+	if !verifyPassword(u.Salt, old, u.PassHash) {
 		a.mu.Unlock()
 		return errNew("原密码错误")
 	}
@@ -671,13 +673,17 @@ func (a *AuthStore) ChangePassword(sess *Session, old, nw string, r *http.Reques
 	u.Salt = salt
 	u.PassHash = hashPassword(salt, nw)
 	u.PassSetNS = time.Now().UnixNano()
+	if err := a.persistUserLocked(u); err != nil {
+		a.mu.Unlock()
+		return fmt.Errorf("保存密码失败: %w", err)
+	}
 	a.mu.Unlock()
 	c, err := r.Cookie("ra_session")
 	except := ""
 	if err == nil {
 		except = c.Value
 	}
-	a.KillSessions(sess.Username, except)
+	a.killSessions(sess.Username, except, sess.Username, "auth.password_changed")
 	if a.open != nil {
 		a.open.logAudit(AuditEntry{TsNS: time.Now().UnixNano(), KeyName: sess.Username,
 			Method: "POST", Path: "/api/auth/password", Result: "ok", IP: r.RemoteAddr, Detail: "修改密码"})

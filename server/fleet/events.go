@@ -24,6 +24,7 @@ type eventRow struct {
 	TSNS      int64  `json:"ts_ns"`
 	VehicleID string `json:"vehicle_id"`
 	Level     string `json:"level"`
+	Kind      string `json:"kind"`
 	Text      string `json:"text"`
 	GroupID   string `json:"group_id"`
 }
@@ -86,6 +87,10 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 			args = append(args, to+" 23:59:59")
 			conds = append(conds, fmt.Sprintf("ts <= $%d::timestamptz", len(args)))
 		}
+		if kind := q.Get("kind"); kind == "veh" || kind == "sys" {
+			args = append(args, kind)
+			conds = append(conds, fmt.Sprintf("kind=$%d", len(args)))
+		}
 		where := strings.Join(conds, " AND ")
 
 		var total int
@@ -98,7 +103,7 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		args = append(args, (page-1)*ps)
 		offIdx := len(args)
 		rows, err := st.db.Query(
-			fmt.Sprintf("SELECT id, ts, coalesce(vehicle_id,''), level, text, group_id FROM events WHERE %s ORDER BY ts DESC, id DESC LIMIT $%d OFFSET $%d", where, limIdx, offIdx),
+			fmt.Sprintf("SELECT id, ts, coalesce(vehicle_id,''), level, kind, text, group_id FROM events WHERE %s ORDER BY ts DESC, id DESC LIMIT $%d OFFSET $%d", where, limIdx, offIdx),
 			args...)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -109,13 +114,34 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		for rows.Next() {
 			var er eventRow
 			var ts time.Time
-			if err := rows.Scan(&er.ID, &ts, &er.VehicleID, &er.Level, &er.Text, &er.GroupID); err != nil {
+			if err := rows.Scan(&er.ID, &ts, &er.VehicleID, &er.Level, &er.Kind, &er.Text, &er.GroupID); err != nil {
 				continue
 			}
 			er.TSNS = ts.UnixNano()
 			items = append(items, er)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "page_size": ps})
+	})
+
+	// 事件分级统计（系统审计页概览卡）：按 kind 返回总数/今日数/各级别数。
+	mux.HandleFunc("GET /api/events/stats", func(w http.ResponseWriter, r *http.Request) {
+		sess := sessOf(r)
+		kind := r.URL.Query().Get("kind")
+		if kind != "veh" && kind != "sys" {
+			kind = "sys"
+		}
+		cond, args, denied := eventScope(sess)
+		if denied || st.db == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"total": 0, "today": 0, "critical": 0, "warn": 0, "info": 0})
+			return
+		}
+		args = append(args, kind)
+		kindIdx := len(args)
+		var total, today, critical, warn, info int
+		_ = st.db.QueryRow(
+			fmt.Sprintf("SELECT count(*), count(*) FILTER (WHERE ts >= date_trunc('day', now())), count(*) FILTER (WHERE level='critical'), count(*) FILTER (WHERE level='warn'), count(*) FILTER (WHERE level='info') FROM events WHERE %s AND kind=$%d", cond, kindIdx),
+			args...).Scan(&total, &today, &critical, &warn, &info)
+		writeJSON(w, http.StatusOK, map[string]any{"total": total, "today": today, "critical": critical, "warn": warn, "info": info})
 	})
 
 	// 已读水位：总览小窗只展示水位之后的事件。
@@ -160,8 +186,14 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		fromIdx := len(args)
 		args = append(args, date+" 23:59:59")
 		toIdx := len(args)
+		kind := r.URL.Query().Get("kind")
+		kindCond := ""
+		if kind == "veh" || kind == "sys" {
+			args = append(args, kind)
+			kindCond = fmt.Sprintf(" AND kind=$%d", len(args))
+		}
 		rows, err := st.db.Query(
-			fmt.Sprintf("SELECT ts, coalesce(vehicle_id,''), level, text, group_id FROM events WHERE %s AND ts >= $%d::timestamptz AND ts <= $%d::timestamptz ORDER BY ts ASC", cond, fromIdx, toIdx),
+			fmt.Sprintf("SELECT ts, coalesce(vehicle_id,''), level, kind, text, group_id FROM events WHERE %s AND ts >= $%d::timestamptz AND ts <= $%d::timestamptz%s ORDER BY ts ASC", cond, fromIdx, toIdx, kindCond),
 			args...)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -172,15 +204,19 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		w.Header().Set("Content-Disposition", "attachment; filename=events-"+date+".csv")
 		_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
 		cw := csv.NewWriter(w)
-		_ = cw.Write([]string{"时间", "车辆", "级别", "内容", "分组"})
+		_ = cw.Write([]string{"时间", "车辆", "级别", "分类", "内容", "分组"})
 		n := 0
 		for rows.Next() {
 			var ts time.Time
-			var veh, level, text, group string
-			if err := rows.Scan(&ts, &veh, &level, &text, &group); err != nil {
+			var veh, level, ek, text, group string
+			if err := rows.Scan(&ts, &veh, &level, &ek, &text, &group); err != nil {
 				continue
 			}
-			_ = cw.Write([]string{ts.Format("2006-01-02 15:04:05"), veh, level, text, group})
+			kl := "系统审计"
+			if ek == "veh" {
+				kl = "车辆告警"
+			}
+			_ = cw.Write([]string{ts.Format("2006-01-02 15:04:05"), veh, level, kl, text, group})
 			n++
 		}
 		cw.Flush()
@@ -218,6 +254,10 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		var res sql.Result
 		var err error
 		var detail string
+		kind, _ := body["kind"].(string)
+		if kind != "veh" && kind != "sys" {
+			kind = ""
+		}
 		if idf, has := body["id"].(float64); has && idf > 0 {
 			res, err = st.db.Exec("DELETE FROM events WHERE id=$1", int64(idf))
 			detail = fmt.Sprintf("单条 id=%d", int64(idf))
@@ -228,9 +268,15 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "需提供 id 或 from/to 日期段"})
 				return
 			}
-			res, err = st.db.Exec("DELETE FROM events WHERE ts >= $1::timestamptz AND ts <= $2::timestamptz",
-				from+" 00:00:00", to+" 23:59:59")
-			detail = fmt.Sprintf("日期段 %s ~ %s", from, to)
+			if kind != "" {
+				res, err = st.db.Exec("DELETE FROM events WHERE ts >= $1::timestamptz AND ts <= $2::timestamptz AND kind=$3",
+					from+" 00:00:00", to+" 23:59:59", kind)
+				detail = fmt.Sprintf("日期段 %s ~ %s（%s）", from, to, kind)
+			} else {
+				res, err = st.db.Exec("DELETE FROM events WHERE ts >= $1::timestamptz AND ts <= $2::timestamptz",
+					from+" 00:00:00", to+" 23:59:59")
+				detail = fmt.Sprintf("日期段 %s ~ %s", from, to)
+			}
 		}
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -333,7 +379,7 @@ func registerEventRoutes(mux *http.ServeMux, svc *Services) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "size": len(buf)})
 	})
 
-	// 模型下载：登录且有权访问该车辆即可；无自定义模型返回 404（前端回退默认模型）。
+	// 模型下载：登录且有权访问该车辆即可；无自定义模型返回 404，前端必须显示真实不可用态。
 	mux.HandleFunc("GET /api/vehicles/{id}/model", func(w http.ResponseWriter, r *http.Request) {
 		sess := sessOf(r)
 		id := r.PathValue("id")

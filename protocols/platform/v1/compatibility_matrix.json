@@ -1,0 +1,19 @@
+{
+  "schema_major": 1,
+  "schema_minor": 0,
+  "entries": [
+    {
+      "id": "ros1-noetic-platform-v1",
+      "stack": "AUTONOMY_STACK_ROS1",
+      "stack_version": "ROS 1 Noetic",
+      "gateway_version": "0.1.0",
+      "adapter_version": "0.1.0",
+      "safety_arbiter_version": "0.1.0",
+      "topic_mapping_version": "ros1-map-v0.1",
+      "required_control_modes": ["CONTROL_MODE_TARGET_MOTION"],
+      "requires_certificate": true,
+      "requires_tpm_for_control": true,
+      "required_modems_for_control": 2
+    }
+  ]
+}

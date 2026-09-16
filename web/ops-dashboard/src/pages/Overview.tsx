@@ -14,10 +14,9 @@ import VehicleTable from "../components/VehicleTable";
 import EventFeed from "../components/EventFeed";
 import TerminalPanel from "../components/TerminalPanel";
 import MiniVideos from "../components/MiniVideos";
-import Modal from "../components/Modal";
+import Modal, { openIfPlain } from "../components/Modal";
 import VideoPanel from "../components/VideoPanel";
 import VehicleDetail, { VehicleDashboard } from "./VehicleDetail";
-import type { MouseEvent as ReactMouseEvent } from "react";
 
 interface Props {
   fleet: FleetState;
@@ -127,7 +126,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   // 远程终端 / 告警与事件 点击标题弹窗放大
   const [bigTerminal, setBigTerminal] = useState(false);
   const [bigEvents, setBigEvents] = useState(false);
-  // 视频监控 / 车辆详情 点击弹窗放大
+  // 视频监控 / 车辆详情 双击弹窗放大
   const [bigVideo, setBigVideo] = useState(false);
   const [bigDetail, setBigDetail] = useState(false);
   const [readmarkNs, setReadmarkNs] = useState(0);
@@ -171,11 +170,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
     setCtxMenu({ id, x, y });
   };
   // 点击任意非交互区域弹窗放大（滚轮滚动不受影响）
-  const openIfPlain = (fn: () => void) => (e: ReactMouseEvent) => {
-    const t = e.target as HTMLElement;
-    if (t.closest("button, select, input, a, textarea, tr, .term-box.live")) return;
-    fn();
-  };
+  // 守卫统一在 Modal.tsx 的 openIfPlain：弹窗/浮层内或已有弹窗时不会误触发放大
 
   // 左右浮层两种地图视图共用
   const leftOverlay = (
@@ -201,10 +196,10 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
         />
       </CollapsePanel>
       <div className="ov-split">
-        <div className="ov-click" onClick={openIfPlain(() => setBigTerminal(true))}>
+        <div className="ov-click" onDoubleClick={openIfPlain(() => setBigTerminal(true))}>
           <TerminalPanel vehicle={selected} fixed onExpand={() => setBigTerminal(true)} />
         </div>
-        <div className="ov-click" onClick={openIfPlain(() => setBigEvents(true))}>
+        <div className="ov-click" onDoubleClick={openIfPlain(() => setBigEvents(true))}>
           <EventFeed events={feedEvents} compact fixed onExpand={() => setBigEvents(true)} onMarkRead={markRead} />
         </div>
       </div>
@@ -212,10 +207,10 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
   );
   const rightOverlay = (
     <SideCol id="right" side="right" label="详情 / 视频" open={rightOpen} onOpenChange={setRightOpen}>
-      <div className="ov-click ov-fit" onClick={openIfPlain(() => setBigDetail(true))}>
+      <div className="ov-click ov-fit" onDoubleClick={openIfPlain(() => setBigDetail(true))}>
         <VehicleDetail fleet={fleet} vehicle={selected} onSelect={onSelect} compact onExpand={() => setBigDetail(true)} />
       </div>
-      <div className="ov-click" onClick={openIfPlain(() => setBigVideo(true))}>
+      <div className="ov-click" onDoubleClick={openIfPlain(() => setBigVideo(true))}>
         <MiniVideos vehicle={selected} onExpand={() => setBigVideo(true)} />
       </div>
     </SideCol>
@@ -234,7 +229,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
         </div>
         <span className="spacer" />
         <span className="muted" style={{ fontSize: 11 }}>
-          数据源：{fleet.source === "live" ? "fleet-hub 实时" : "离线演示（mock）"} · 1Hz 推送
+          数据源：{fleet.source === "live" ? "fleet-hub 实时" : fleet.source === "degraded" ? "最后验证快照（链路恢复中）" : "尚未取得车队快照"} · 1Hz 推送
         </span>
       </div>
       <div className="overview-main">
@@ -266,7 +261,7 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
       </div>
       {bigTerminal && (
         <Modal
-          title={"远程终端 · " + (selected ? selected.vehicle_id : "sim-veh-001")}
+          title={"远程终端" + (selected ? " · " + selected.vehicle_id : "")}
           onClose={() => setBigTerminal(false)}
           width="min(960px, 94vw)"
         >
@@ -284,12 +279,12 @@ export default function Overview({ fleet, selected, onSelect }: Props) {
       )}
       {bigVideo && (
         <Modal
-          title={"视频监控 · " + (selected ? selected.vehicle_id : "sim-veh-001")}
+          title={"视频监控" + (selected ? " · " + selected.vehicle_id : "")}
           onClose={() => setBigVideo(false)}
           width="min(860px, 94vw)"
         >
           <div className="big-modal-body" style={{ height: "min(540px, 70vh)" }}>
-            <VideoPanel vehicle={selected} height={380} />
+            <VideoPanel vehicle={selected} fill />
           </div>
         </Modal>
       )}

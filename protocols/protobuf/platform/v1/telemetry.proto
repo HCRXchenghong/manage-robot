@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package platform.v1;
 
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
 // 遥测类消息（对应架构文档 §6.2 VSS 信号模型）。
 
 message DoubleList {

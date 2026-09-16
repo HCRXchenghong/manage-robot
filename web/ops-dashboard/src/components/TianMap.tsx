@@ -14,7 +14,7 @@ import {
 import "leaflet/dist/leaflet.css";
 import type { VehicleSnap } from "../types";
 
-// 底部地图：天地图 WMTS 服务（配置 tk 后启用）；未配置 tk 时降级 OSM 底图演示。
+// 底部地图：天地图 WMTS 服务（配置 tk 后启用）；未配置 tk 时使用 OSM 公共底图。
 // 车辆坐标（米）以可配置原点映射为经纬度，标记随遥测移动并留轨迹。
 
 interface Origin {
@@ -142,7 +142,7 @@ export default function TianMap({ vehicle }: { vehicle: VehicleSnap | null }) {
       <div className="panel-title">
         <span>地图 · 天地图服务</span>
         <span className="hint">
-          {tk ? "天地图 WMTS 已启用" : "未配置天地图 tk，演示用 OSM 底图"}
+          {tk ? "天地图 WMTS 已启用" : "未配置天地图 tk，当前使用 OSM 公共底图"}
         </span>
         <span className="spacer" />
         <input
@@ -170,4 +170,3 @@ export default function TianMap({ vehicle }: { vehicle: VehicleSnap | null }) {
     </div>
   );
 }
-

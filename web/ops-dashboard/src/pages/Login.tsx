@@ -1,10 +1,8 @@
-// 登录页（按设计稿重做）：左侧品牌+三能力卡片，右侧 tab 两种登录方式。
-// 账号密码两段式：先账密校验 → 通过后再出图形人机验证 → 验证通过才发会话。
-// 手机号登录：手机号格式正确才允许点「获取验证码」；短信码本身即人机验证，通过直接进入。
+// 登录页：先账密校验，再图形人机验证，最后由服务端签发 HttpOnly 会话。
+// 手机号登录暂不展示：后端没有真实短信供应商时必须关闭入口，禁止把
+// “短信验证码”做成本地假能力或让操作员误以为该链路已经可用。
 import { useCallback, useEffect, useState } from "react";
-import { fetchCaptcha, login, loginPhone, sendSmsCode, verifyLogin } from "../api";
-
-const PHONE_RE = /^1[3-9]\d{9}$/;
+import { fetchCaptcha, login, verifyLogin } from "../api";
 
 const FEATURES = [
   {
@@ -46,7 +44,6 @@ function fmtErr(e: unknown): string {
 }
 
 export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
-  const [tab, setTab] = useState<"phone" | "creds">("phone");
   const [stage, setStage] = useState<"form" | "captcha">("form");
   // 账号密码
   const [username, setUsername] = useState("");
@@ -55,11 +52,6 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [capId, setCapId] = useState("");
   const [capImg, setCapImg] = useState("");
   const [capAns, setCapAns] = useState("");
-  // 手机号
-  const [phone, setPhone] = useState("");
-  const [smsCode, setSmsCode] = useState("");
-  const [smsNote, setSmsNote] = useState("");
-  const [cooldown, setCooldown] = useState(0);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -77,46 +69,6 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
   useEffect(() => {
     if (stage === "captcha") void reloadCaptcha();
   }, [stage, reloadCaptcha]);
-
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
-
-  const phoneOK = PHONE_RE.test(phone);
-
-  const doSendSms = async () => {
-    setErr("");
-    setSmsNote("");
-    try {
-      const r = await sendSmsCode(phone);
-      setSmsNote((r.note ? r.note + "：" : "") + (r.demo_code || ""));
-      setCooldown(60);
-    } catch (e) {
-      setErr(fmtErr(e));
-    }
-  };
-
-  const doPhoneLogin = async () => {
-    setErr("");
-    if (!phoneOK) {
-      setErr("请输入正确的 11 位手机号");
-      return;
-    }
-    if (!smsCode) {
-      setErr("请输入短信验证码");
-      return;
-    }
-    setBusy(true);
-    try {
-      await loginPhone(phone, smsCode);
-      onLoggedIn();
-    } catch (e) {
-      setErr(fmtErr(e));
-    }
-    setBusy(false);
-  };
 
   const doLogin = async () => {
     setErr("");
@@ -173,54 +125,9 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
       </div>
       <div className="login-right">
         <div className="login-tabs">
-          <div
-            className={"login-tab" + (tab === "phone" ? " active" : "")}
-            onClick={() => { setTab("phone"); setErr(""); }}
-          >
-            手机号登录
-          </div>
-          <div
-            className={"login-tab" + (tab === "creds" ? " active" : "")}
-            onClick={() => { setTab("creds"); setErr(""); }}
-          >
-            账号密码
-          </div>
+          <div className="login-tab active">账号密码</div>
         </div>
-        {tab === "phone" ? (
-          <>
-            <div className="login-field">
-              <label>手机号</label>
-              <input
-                className="login-input" value={phone} maxLength={11} autoComplete="tel"
-                placeholder="请输入手机号"
-                onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
-                onKeyDown={(e) => onKey(e, () => void doPhoneLogin())}
-              />
-            </div>
-            <div className="login-field">
-              <label>验证码</label>
-              <div className="login-sms-row">
-                <input
-                  className="login-input" style={{ flex: 1 }} value={smsCode} maxLength={6}
-                  placeholder="请输入验证码"
-                  onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, ""))}
-                  onKeyDown={(e) => onKey(e, () => void doPhoneLogin())}
-                />
-                <button
-                  className="login-sms-btn" disabled={!phoneOK || cooldown > 0 || busy}
-                  onClick={() => void doSendSms()}
-                >
-                  {cooldown > 0 ? cooldown + "s 后重发" : "获取验证码"}
-                </button>
-              </div>
-              {smsNote && <div className="login-demo-note">{smsNote}</div>}
-            </div>
-            {err && <div className="login-err">{err}</div>}
-            <button className="login-btn" disabled={busy} onClick={() => void doPhoneLogin()}>
-              {busy ? "验证中…" : "登录"}
-            </button>
-          </>
-        ) : stage === "form" ? (
+        {stage === "form" ? (
           <>
             <div className="login-field">
               <label>账号</label>

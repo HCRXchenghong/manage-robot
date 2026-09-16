@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package platform.v1;
+
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
+message NavigationPoint {
+  string name = 1;
+  double x_m = 2;
+  double y_m = 3;
+  int64 at_unix_ns = 4;
+  double dwell_s = 5;
+}
+
+enum NavigationAction {
+  NAVIGATION_ACTION_UNSPECIFIED = 0;
+  NAVIGATION_ACTION_DISPATCH = 1;
+  NAVIGATION_ACTION_CANCEL = 2;
+}
+
+message NavigationCommand {
+  uint32 version = 1;
+  NavigationAction action = 2;
+  string route_id = 3;
+  string vehicle_id = 4;
+  string name = 5;
+  string trace_id = 6;
+  repeated NavigationPoint points = 7;
+}
+
+// Vehicle-side acknowledgement for a navigation command.  Broker delivery is
+// not execution: the platform only changes the route state after this signed
+// vehicle-originated acknowledgement is accepted.
+enum NavigationResult {
+  NAVIGATION_RESULT_UNSPECIFIED = 0;
+  NAVIGATION_RESULT_ACCEPTED = 1;
+  NAVIGATION_RESULT_STARTED = 2;
+  NAVIGATION_RESULT_COMPLETED = 3;
+  NAVIGATION_RESULT_REJECTED = 4;
+  NAVIGATION_RESULT_CANCELLED = 5;
+  NAVIGATION_RESULT_FAILED = 6;
+}
+
+message NavigationAck {
+  uint32 version = 1;
+  NavigationAction action = 2;
+  string route_id = 3;
+  string vehicle_id = 4;
+  NavigationResult result = 5;
+  string detail = 6;
+  uint32 current_point = 7;
+  int64 applied_at_unix_ns = 8;
+}

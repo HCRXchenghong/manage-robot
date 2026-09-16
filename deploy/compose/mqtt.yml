@@ -1,0 +1,20 @@
+# 真实 MQTT 5/mTLS Broker（开发证书仅限隔离开发环境）。
+# 启动：docker compose -f mqtt.yml up -d
+# 生产部署必须替换 deploy/pki/dev 下的证书，并启用企业 CA/CRL/HA。
+services:
+  mqtt:
+    image: eclipse-mosquitto:2.0
+    container_name: ra-mqtt-current
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mqtt/mosquitto.acl:/mosquitto/config/mosquitto.acl:ro
+      - ../pki/dev:/mosquitto/certs:ro
+      - ra-mqtt-data:/mosquitto/data
+      - ra-mqtt-log:/mosquitto/log
+    restart: unless-stopped
+
+volumes:
+  ra-mqtt-data:
+  ra-mqtt-log:

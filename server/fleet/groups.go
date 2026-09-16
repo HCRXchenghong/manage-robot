@@ -4,6 +4,7 @@ package main
 // 车辆也归属分组；普通管理员与用户只能看到/调度自己分组的数据。
 
 import (
+	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,13 +24,35 @@ type GroupStore struct {
 	mu     sync.Mutex
 	groups map[string]*Group
 	seq    int
+	db     *sql.DB
 }
 
-func NewGroupStore() *GroupStore {
-	g := &GroupStore{groups: map[string]*Group{}, seq: 0}
-	g.Create("默认分组")
-	g.Create("示范项目平台")
-	return g
+func NewGroupStore(dbs ...*sql.DB) *GroupStore {
+	var db *sql.DB
+	if len(dbs) > 0 {
+		db = dbs[0]
+	}
+	gs := &GroupStore{groups: map[string]*Group{}, seq: 0, db: db}
+	if db == nil {
+		return gs
+	}
+	rows, err := db.Query("SELECT id, name, max_admins, max_users, (EXTRACT(EPOCH FROM created_at) * 1000000000)::bigint FROM org_groups")
+	if err != nil {
+		return gs
+	}
+	defer rows.Close()
+	for rows.Next() {
+		g := &Group{}
+		if err := rows.Scan(&g.ID, &g.Name, &g.MaxAdmins, &g.MaxUsers, &g.CreatedNS); err != nil {
+			continue
+		}
+		gs.groups[g.ID] = g
+		var n int
+		if _, err := fmt.Sscanf(g.ID, "g-%d", &n); err == nil && n > gs.seq {
+			gs.seq = n
+		}
+	}
+	return gs
 }
 
 func (gs *GroupStore) Create(name string) (*Group, error) {
@@ -47,6 +70,12 @@ func (gs *GroupStore) Create(name string) (*Group, error) {
 	gs.seq++
 	id := fmt.Sprintf("g-%d", gs.seq) // 稳定序号：重启后顺序不变，车端/网关可固定引用
 	g := &Group{ID: id, Name: name, MaxAdmins: 5, MaxUsers: 10, CreatedNS: time.Now().UnixNano()}
+	if gs.db != nil {
+		if _, err := gs.db.Exec("INSERT INTO org_groups(id, name, max_admins, max_users, created_at) VALUES ($1,$2,$3,$4,$5)", g.ID, g.Name, g.MaxAdmins, g.MaxUsers, time.Unix(0, g.CreatedNS)); err != nil {
+			gs.seq--
+			return nil, err
+		}
+	}
 	gs.groups[id] = g
 	return g, nil
 }
@@ -90,6 +119,11 @@ func (gs *GroupStore) Update(id, name string, maxAdmins, maxUsers int) (*Group, 
 	if maxUsers > 0 {
 		g.MaxUsers = maxUsers
 	}
+	if gs.db != nil {
+		if _, err := gs.db.Exec("UPDATE org_groups SET name=$2, max_admins=$3, max_users=$4 WHERE id=$1", g.ID, g.Name, g.MaxAdmins, g.MaxUsers); err != nil {
+			return nil, err
+		}
+	}
 	return g, nil
 }
 
@@ -98,6 +132,11 @@ func (gs *GroupStore) Delete(id string) error {
 	defer gs.mu.Unlock()
 	if _, ok := gs.groups[id]; !ok {
 		return fmt.Errorf("分组不存在")
+	}
+	if gs.db != nil {
+		if _, err := gs.db.Exec("DELETE FROM org_groups WHERE id=$1", id); err != nil {
+			return err
+		}
 	}
 	delete(gs.groups, id)
 	return nil

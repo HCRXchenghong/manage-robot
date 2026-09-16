@@ -1,112 +1,35 @@
-import { useEffect, useRef, useState } from "react";
+// A terminal is intentionally unavailable until the vehicle workspace agent
+// establishes its authenticated reverse channel. No shell is emulated here.
 import CollapsePanel from "./CollapsePanel";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
 import type { VehicleSnap } from "../types";
-import { wsURL } from "../api";
 
 interface Props {
   vehicle: VehicleSnap | null;
   fixed?: boolean;
   onExpand?: () => void;
+  autoConnect?: boolean;
+  panelId?: string;
+  vehicleId?: string;
 }
 
-type ConnState = "closed" | "connecting" | "open";
-
-export default function TerminalPanel({ vehicle, fixed, onExpand }: Props) {
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const [conn, setConn] = useState<ConnState>("closed");
-  const vid = vehicle ? vehicle.vehicle_id : "sim-veh-001";
-
-  useEffect(() => {
-    const term = new Terminal({
-      fontSize: 12,
-      fontFamily: "Menlo, Consolas, monospace",
-      theme: { background: "#05080f", foreground: "#dce6f7", cursor: "#38bdf8" },
-      convertEol: true,
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    termRef.current = term;
-    fitRef.current = fit;
-    if (boxRef.current) {
-      term.open(boxRef.current);
-      fit.fit();
-    }
-    term.writeln("终端就绪。点击「打开终端」连接 " + vid + "。");
-
-    const onResize = () => fitRef.current?.fit();
-    window.addEventListener("resize", onResize);
-    const ro = new ResizeObserver(() => fitRef.current?.fit());
-    if (boxRef.current) ro.observe(boxRef.current);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      ro.disconnect();
-      wsRef.current?.close();
-      term.dispose();
-    };
-    // vid 变化时重建终端会话
-  }, [vid]);
-
-  const connect = () => {
-    const term = termRef.current;
-    if (!term || wsRef.current) return;
-    setConn("connecting");
-    term.writeln("正在连接 " + vid + " …");
-    const ws = new WebSocket(wsURL("/ws/terminal?vehicle_id=" + encodeURIComponent(vid)));
-    wsRef.current = ws;
-    ws.onopen = () => {
-      setConn("open");
-      term.focus();
-    };
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data as string) as { type: string; data: string };
-        if (msg.type === "output") term.write(msg.data);
-      } catch {
-        term.write(String(ev.data));
-      }
-    };
-    ws.onclose = () => {
-      setConn("closed");
-      wsRef.current = null;
-      term.writeln("（连接已断开）");
-    };
-    ws.onerror = () => {
-      term.writeln("（连接失败：后端 /ws/terminal 不可达）");
-      ws.close();
-    };
-    const disp = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "input", data }));
-      }
-    });
-    // 关闭时注销输入监听
-    ws.addEventListener("close", () => disp.dispose());
-  };
-
-  const disconnect = () => {
-    wsRef.current?.close();
-  };
-
+export default function TerminalPanel({ vehicle, fixed, onExpand, panelId, vehicleId }: Props) {
+  const id = vehicleId || vehicle?.vehicle_id;
   return (
     <CollapsePanel
-      id="ov-terminal"
+      id={panelId || "ov-terminal"}
       fixed={fixed}
       onTitleClick={onExpand}
-      title={"远程终端 · " + vid}
-      hint={conn === "open" ? "已连接" : conn === "connecting" ? "连接中…" : "未连接"}
+      title={"远程终端" + (id ? " · " + id : "")}
+      hint="车端 Agent 未注册"
     >
-      <div className={"term-box" + (conn === "open" ? " live" : "")} ref={boxRef} />
-      <div className="btn-row mt">
-        <button className="btn small primary" disabled={conn !== "closed"} onClick={connect}>打开终端</button>
-        <button className="btn small" disabled={conn === "closed"} onClick={disconnect}>断开</button>
-        <button className="btn small" onClick={() => { disconnect(); window.setTimeout(connect, 200); }}>重连</button>
+      <div className="term-box" style={{ padding: 18, display: "grid", placeItems: "center", textAlign: "center" }}>
+        <div>
+          <div style={{ fontWeight: 650, marginBottom: 8 }}>真实终端通道未建立</div>
+          <div className="muted" style={{ fontSize: 12, lineHeight: 1.7 }}>
+            {id ? "车辆 " + id + " 尚未注册 workspace-agent。" : "请先选择已登记车辆。"}<br />
+            车端 Agent 必须通过 Gateway 建立受令牌保护的反向通道；平台不会模拟 Shell 或执行命令。
+          </div>
+        </div>
       </div>
     </CollapsePanel>
   );

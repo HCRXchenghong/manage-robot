@@ -2,13 +2,16 @@ package main
 
 // ws.go：/ws/fleet WebSocket 集线器。
 // 帧格式：{"type":"state","data":FleetSnap}（1Hz + 连接即发）与
-// {"type":"event","data":EventSnap}（即时）。客户端断开时读写 goroutine
+// {"type":"event","data":EventSnap}（即时）。每个连接在发送前按其会话过滤，
+// 不能因 REST 受控而在 WS 泄露其他分组的数据。客户端断开时读写 goroutine
 // 自行退出；写队列满的慢客户端主动断开，防止内存无限增长。
 
 import (
 	"encoding/json"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -26,8 +29,33 @@ const (
 var wsUpgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 4096,
-	// 开发期放宽跨域；生产由入口层（nginx 同源）收敛。
-	CheckOrigin: func(r *http.Request) bool { return true },
+	// 浏览器的 Cookie 会在 WS 握手中附带；绝不能接受任意 Origin。
+	// 仅生产同源，或 fleet-hub 在环回地址时允许 Vite 本地代理跨端口接入。
+	CheckOrigin: allowWSOrigin,
+}
+
+func isLoopbackHost(host string) bool {
+	name, _, err := net.SplitHostPort(host)
+	if err != nil {
+		name = host
+	}
+	name = strings.Trim(name, "[]")
+	return strings.EqualFold(name, "localhost") || (net.ParseIP(name) != nil && net.ParseIP(name).IsLoopback())
+}
+
+func allowWSOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, r.Host) {
+		return true
+	}
+	return isLoopbackHost(r.Host) && isLoopbackHost(u.Host)
 }
 
 // Hub 管理全部 WS 客户端。
@@ -43,32 +71,113 @@ func (h *Hub) Broadcast(b []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for c := range h.clients {
-		select {
-		case c.send <- b:
-		default:
+		h.enqueueLocked(c, b)
+	}
+}
+
+// PublishState 按连接的会话范围序列化全量快照。每位用户都只能收到其有权访问的车辆和事件。
+func (h *Hub) PublishState(snap FleetSnap) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if !c.sessionActive() {
 			delete(h.clients, c)
 			close(c.send)
-			log.Printf("WS 慢客户端断开: %s", c.conn.RemoteAddr())
+			if c.metrics != nil {
+				c.metrics.websocketDisconnections.Add(1)
+			}
+			continue
+		}
+		b, err := json.Marshal(map[string]any{"type": "state", "data": c.filterSnap(snap)})
+		if err == nil {
+			h.enqueueLocked(c, b)
 		}
 	}
 }
 
-// ServeWS 返回 /ws/fleet 的 handler。
-func (h *Hub) ServeWS(st *State) http.HandlerFunc {
+// PublishEvent 只向拥有目标车辆范围的会话发送即时事件；平台级事件仅发给超管。
+func (h *Hub) PublishEvent(event EventSnap) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if !c.sessionActive() {
+			delete(h.clients, c)
+			close(c.send)
+			if c.metrics != nil {
+				c.metrics.websocketDisconnections.Add(1)
+			}
+			continue
+		}
+		if !c.allowEvent(event) {
+			continue
+		}
+		if b, err := json.Marshal(map[string]any{"type": "event", "data": event}); err == nil {
+			h.enqueueLocked(c, b)
+		}
+	}
+}
+
+// enqueueLocked sends or disconnects a slow client. Caller must hold h.mu.
+func (h *Hub) enqueueLocked(c *wsClient, b []byte) {
+	select {
+	case c.send <- b:
+	default:
+		delete(h.clients, c)
+		close(c.send)
+		if c.metrics != nil {
+			c.metrics.websocketDisconnections.Add(1)
+		}
+		log.Printf("WS 慢客户端断开: %s", c.conn.RemoteAddr())
+	}
+}
+
+// ServeWS 返回 /ws/fleet 的 handler。连接存活期间每次推送都会重新读取会话，
+// 因此登出、改密或管理员调整分组后，不会继续沿用升级连接时的旧权限。
+func (h *Hub) ServeWS(st *State, auth *AuthStore, sess *Session) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if auth == nil || sess == nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("WS 升级失败: %v", err)
 			return
 		}
-		c := &wsClient{hub: h, conn: conn, send: make(chan []byte, wsWriteBuffer)}
+		session := func() *Session { return auth.SessionSnapshot(sess.Token) }
+		filter := func(snap FleetSnap) FleetSnap {
+			current := session()
+			if current == nil {
+				return FleetSnap{ServerTimeNS: snap.ServerTimeNS, Vehicles: []VehicleSnap{}, Events: []EventSnap{}}
+			}
+			return filterSnapFor(snap, current)
+		}
+		allowEvent := func(event EventSnap) bool {
+			current := session()
+			if current == nil {
+				return false
+			}
+			if current.Role == "super" {
+				return true
+			}
+			return event.VehicleID != "" && canAccessVehicle(current, st, event.VehicleID)
+		}
+		c := &wsClient{
+			hub: h, conn: conn, send: make(chan []byte, wsWriteBuffer),
+			filterSnap: filter, allowEvent: allowEvent,
+			sessionActive: func() bool { return session() != nil },
+			metrics:       st.metrics,
+		}
 		h.mu.Lock()
 		h.clients[c] = struct{}{}
 		h.mu.Unlock()
+		if st.metrics != nil {
+			st.metrics.websocketConnections.Add(1)
+		}
 		log.Printf("WS 客户端接入: %s", conn.RemoteAddr())
 
 		// 连上即发一次全量，前端不必等下一个 1Hz 周期。
-		if b, err := json.Marshal(map[string]any{"type": "state", "data": st.Snapshot()}); err == nil {
+		if b, err := json.Marshal(map[string]any{"type": "state", "data": filter(st.Snapshot())}); err == nil {
 			c.send <- b
 		}
 		go c.writePump()
@@ -77,9 +186,13 @@ func (h *Hub) ServeWS(st *State) http.HandlerFunc {
 }
 
 type wsClient struct {
-	hub  *Hub
-	conn *websocket.Conn
-	send chan []byte
+	hub           *Hub
+	conn          *websocket.Conn
+	send          chan []byte
+	filterSnap    func(FleetSnap) FleetSnap
+	allowEvent    func(EventSnap) bool
+	sessionActive func() bool
+	metrics       *RuntimeMetrics
 }
 
 // readPump 只负责探测断开（不消费业务上行消息）。
@@ -133,78 +246,28 @@ func (h *Hub) remove(c *wsClient) {
 	if _, ok := h.clients[c]; ok {
 		delete(h.clients, c)
 		close(c.send)
+		if c.metrics != nil {
+			c.metrics.websocketDisconnections.Add(1)
+		}
 	}
 }
 
-// ServeWSTerminal 阶段 1 模拟终端：hub 代理回显（阶段 2 接 workspace-agent 真 PTY）。
-// 协议：客户端发 {"type":"input","data":"..."}，服务端回 {"type":"output","data":"..."}。
+func (h *Hub) clientCount() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.clients)
+}
+
+// ServeWSTerminal intentionally does not emulate a shell. A real terminal
+// requires the car-side workspace agent to establish an authenticated reverse
+// channel; exposing its loopback TCP listener directly would be unsafe.
 func ServeWSTerminal(w http.ResponseWriter, r *http.Request) {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Printf("终端 WS 升级失败: %v", err)
+	if r.URL.Query().Get("vehicle_id") == "" {
+		http.Error(w, "vehicle_id required", http.StatusBadRequest)
 		return
 	}
-	defer conn.Close()
-	vid := r.URL.Query().Get("vehicle_id")
-	if vid == "" {
-		vid = "sim-veh-001"
-	}
-	out := func(s string) {
-		_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-		_ = conn.WriteJSON(map[string]string{"type": "output", "data": s})
-	}
-	out("燃石创想 车端远程终端（阶段 1 模拟回显）\r\n")
-	out("已连接车辆 " + vid + "；生产环境将接入 workspace-agent 的真实 PTY。\r\n")
-	out("输入 help 查看演示命令。\r\n\r\n")
-	prompt := func() { out(vid + ":~$ ") }
-	prompt()
-	var line strings.Builder
-	for {
-		var msg struct {
-			Type string `json:"type"`
-			Data string `json:"data"`
-		}
-		if err := conn.ReadJSON(&msg); err != nil {
-			return
-		}
-		if msg.Type != "input" {
-			continue
-		}
-		for _, ch := range msg.Data {
-			switch ch {
-			case '\r', '\n':
-				out("\r\n")
-				cmd := strings.TrimSpace(line.String())
-				line.Reset()
-				switch cmd {
-				case "":
-				case "help":
-					out("演示命令: help / whoami / mode / uptime / ls / rostopic list\r\n")
-				case "whoami":
-					out("robot\r\n")
-				case "mode":
-					out("autonomous（阶段 1 模拟应答）\r\n")
-				case "uptime":
-					out("up 42 minutes (simulated)\r\n")
-				case "ls":
-					out("catkin_ws/  logs/  config/\r\n")
-				case "rostopic list":
-					out("/vehicle_status  /battery  /ecu_cmd  /diagnostics\r\n")
-				default:
-					out("模拟环境无此命令: " + cmd + "\r\n")
-				}
-				prompt()
-			case 127, 8: // 退格
-				s := line.String()
-				if len(s) > 0 {
-					line.Reset()
-					line.WriteString(s[:len(s)-1])
-					out("\b \b")
-				}
-			default:
-				line.WriteRune(ch)
-				out(string(ch))
-			}
-		}
-	}
+	http.Error(w, "workspace agent is not registered for this vehicle", http.StatusServiceUnavailable)
 }

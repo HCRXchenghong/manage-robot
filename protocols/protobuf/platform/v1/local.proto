@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package platform.v1;
+
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
+import "platform/v1/control.proto";
+import "platform/v1/envelope.proto";
+import "platform/v1/workspace.proto";
+
+// 车内 Unix Domain Socket 帧。长度前缀由传输层提供，消息本身必须是
+// deterministic protobuf；禁止 JSON-line、换行分隔和未认证的角色声明。
+message LocalFrame {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_HELLO = 1;
+    KIND_ENVELOPE = 2;
+    KIND_ACTUATOR_REQUEST = 3;
+    KIND_ACTUATOR_REPLY = 4;
+  }
+
+  Kind kind = 1;
+  string component = 2; // adapter / arbiter / workspace
+  string protocol = 3;  // platform.v1.local
+  Envelope envelope = 4;
+
+  oneof body {
+    ActuatorRequest actuator_request = 10;
+    ActuatorReply actuator_reply = 11;
+    TerminalGrant terminal_grant = 12;
+    WorkspaceData workspace_data = 13;
+    WorkspaceClose workspace_close = 14;
+  }
+}
+
+message ActuatorRequest {
+  oneof action {
+    TargetMotion target_motion = 1;
+    string minimal_risk_reason = 2;
+  }
+}
+
+message ActuatorReply {
+  bool ok = 1;
+  string error = 2;
+  uint64 applied_monotonic_ns = 3;
+}

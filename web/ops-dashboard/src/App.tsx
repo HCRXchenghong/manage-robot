@@ -8,8 +8,12 @@ import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Vehicles from "./pages/Vehicles";
 import Drive from "./pages/Drive";
+import DriveView from "./pages/DriveView";
+import PanelView from "./pages/PanelView";
 import Video from "./pages/Video";
-import Alerts from "./pages/Alerts";
+import VideoWall from "./pages/VideoWall";
+import VideoConf from "./components/VideoConf";
+import Audit from "./pages/Audit";
 import Terminal from "./pages/Terminal";
 import Maps from "./pages/Maps";
 import MapEdit from "./pages/MapEdit";
@@ -17,21 +21,30 @@ import NavRoutePage from "./pages/NavRoute";
 import ApiPortal from "./pages/ApiPortal";
 import AdminPage from "./pages/Admin";
 import Twin from "./pages/Twin";
+import TermWin from "./pages/TermWin";
+import RvizPage from "./pages/RvizPage";
 import type { Me } from "./types";
 
 export type PageId =
   | "overview"
   | "vehicles"
   | "drive"
+  | "driveview"
+  | "panel"
   | "video"
+  | "videowall"
+  | "videoconf"
   | "alerts"
+  | "audit"
   | "terminal"
   | "maps"
   | "mapedit"
   | "navroute"
   | "apiportal"
   | "admin"
-  | "twin";
+  | "twin"
+  | "termwin"
+  | "rviz";
 
 const NAV: { id: PageId; icon: string; label: string; adminOnly?: boolean }[] = [
   { id: "overview", icon: "grid", label: "总览大屏" },
@@ -40,13 +53,13 @@ const NAV: { id: PageId; icon: string; label: string; adminOnly?: boolean }[] = 
   { id: "navroute", icon: "route", label: "循迹导航" },
   { id: "drive", icon: "joystick", label: "远程接管" },
   { id: "video", icon: "camera", label: "视频监控" },
-  { id: "alerts", icon: "bell", label: "告警与事件" },
+  { id: "audit", icon: "shield", label: "审计中心" },
   { id: "terminal", icon: "terminal", label: "远程终端" },
   { id: "apiportal", icon: "plug", label: "API 平台", adminOnly: true },
   { id: "admin", icon: "users", label: "组织管理", adminOnly: true },
 ];
 
-const PAGE_IDS: PageId[] = ["overview","vehicles","drive","video","alerts","terminal","maps","mapedit","navroute","apiportal","admin","twin"];
+const PAGE_IDS: PageId[] = ["overview","vehicles","drive","driveview","panel","video","videowall","videoconf","alerts","audit","terminal","maps","mapedit","navroute","apiportal","admin","twin","termwin","rviz"];
 
 // hash 路由：#/页面?参数 —— 刷新不回首页、筛选状态可进 URL（根源修复）。
 export function parseHash(): { page: PageId; params: URLSearchParams } {
@@ -71,9 +84,9 @@ const roleLabel = (r: string) =>
   r === "super" ? "超级管理员" : r === "group_admin" ? "管理员" : "用户";
 
 export default function App() {
-  const fleet = useFleet(); // hooks 必须无条件调用（登录态判断在其后）
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(true);
+  const fleet = useFleet(me !== null); // 会话确认后才启动实时链路，避免登录页 401 重连闪动
   const [route, setRoute] = useState(parseHash);
   const [selected, setSelected] = useState<string>("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -158,6 +171,41 @@ export default function App() {
     return <Twin vehicleId={route.params.get("id") || ""} />;
   }
 
+  // 独立车端终端页：从「远程终端」页新标签页打开（#/termwin/:id），进入自动连接
+  if (page === "termwin") {
+    return <TermWin vehicleId={route.params.get("id") || ""} />;
+  }
+
+  // RViz 风格可视化页：终端输入 rviz 等命令自动新开标签（#/rviz?vehicle_id=…）
+  if (page === "rviz") {
+    return (
+      <RvizPage
+        vehicleId={route.params.get("vehicle_id") || route.params.get("id") || ""}
+        app={route.params.get("app") || "rviz"}
+      />
+    );
+  }
+
+  // 新远程驾驶接管页：独立页面（无侧栏，有返回按钮）
+  if (page === "driveview") {
+    return <DriveView vehicleId={route.params.get("id") || ""} />;
+  }
+
+  // 视频监控中控台：独立页（无侧栏），从「视频监控」页新标签页打开
+  if (page === "videowall") {
+    return <VideoWall />;
+  }
+
+  // 独立面板页（右键 → 新标签页打开）：#/panel/{kind}?vehicle=xxx，页内二次鉴权
+  if (page === "panel") {
+    return (
+      <PanelView
+        kind={route.params.get("id") || ""}
+        vehicleId={route.params.get("vehicle") || route.params.get("id2") || ""}
+      />
+    );
+  }
+
   const doLogout = async () => {
     await logout();
     window.location.href = "/";
@@ -165,7 +213,13 @@ export default function App() {
 
   return (
     <div className="app">
-      <TopBar snap={scopedFleet.snap} source={scopedFleet.source} wsConnected={scopedFleet.wsConnected} />
+      <TopBar
+        snap={scopedFleet.snap}
+        source={scopedFleet.source}
+        wsConnected={scopedFleet.wsConnected}
+        lastVerifiedAt={scopedFleet.lastVerifiedAt}
+        lastLiveAt={scopedFleet.lastLiveAt}
+      />
       <div className="app-body">
         <aside className={"sidebar" + (navCollapsed ? " collapsed" : "")}>
           <nav>
@@ -233,10 +287,17 @@ export default function App() {
             <Vehicles fleet={scopedFleet} me={me} onSelect={selectVehicle} />
           )}
           {page === "drive" && (
-            <Drive fleet={scopedFleet} vehicle={selVehicle} onSelect={selectVehicle} />
+            <Drive fleet={scopedFleet} me={me} />
           )}
           {page === "video" && <Video fleet={scopedFleet} vehicle={selVehicle} />}
-          {page === "alerts" && <Alerts me={me} />}
+          {page === "videoconf" && (
+            <VideoConf
+              vehicle={scopedFleet.snap.vehicles.find((v) => v.vehicle_id === (route.params.get("id") || "")) || null}
+              back={() => navTo("video")}
+            />
+          )}
+          {page === "alerts" && <Audit me={me} />}
+          {page === "audit" && <Audit me={me} />}
           {page === "terminal" && <Terminal fleet={scopedFleet} vehicle={selVehicle} />}
           {page === "maps" && (
             <Maps

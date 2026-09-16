@@ -17,11 +17,23 @@ react / react-dom / three / @react-three/fiber / @xterm/* / leaflet / vite / typ
 - src/App.tsx —— 侧栏 7 分类路由（总览大屏 / 车辆列表 / 车辆详情 /
   远程驾驶·接管 / 视频监控 / 告警与事件 / 远程终端）+ 底部 admin
 - src/api.ts —— REST + WebSocket（指数退避重连，重连后先拉全量对齐）；
-  后端不可达自动降级 src/mock.ts 演示数据，10s 探测恢复
+  后端不可达时只显示 unavailable/degraded 状态，不生成车辆、媒体或地图数据
 - src/components/LidarView.tsx —— 激光雷达点云地图（重点）
 - src/components/ —— TopBar / StatCards / VehicleTable / EventFeed /
   TakeoverPanel / TerminalPanel / VideoPanel / Sparkline
 - src/pages/ —— 七个页面
+
+## 远程终端与 RViz 可视化（新标签页）
+
+- 远程终端页顶部可设置远程车辆（分组下拉 + 在线/模式徽标）；「新标签页打开车端终端」
+  打开独立页 `#/termwin/:id`（无侧栏，进入自动连接，等保会话校验）。
+- 终端输入可视化命令（rviz / rviz2 / webviz / foxglove）：回车手势内同步新开
+  `#/rviz?vehicle_id=…` RViz 风格页（Displays 树 / 3D 视口 / Views / Time 状态栏；
+  点云 /api/pointcloud、位姿 /ws/fleet、Path /api/nav/routes）；
+  hub 同时下发 `{"type":"app"}` 事件，车端真实启动可视化时可据此补开标签；
+  被浏览器拦截时面板下方出现兜底链接条（对齐架构规范「由用户点击打开」）。
+- `/ws/terminal` 只连接受授权的 workspace-agent；车辆未注册或通道不可用时拒绝连接，
+  不提供 hub 回显替代。
 
 ## 激光雷达点云地图
 
@@ -38,7 +50,7 @@ react / react-dom / three / @react-three/fiber / @xterm/* / leaflet / vite / typ
 
 前端只收 JSON/CSV 文本格式；二进制点云（如 PCD）先用随仓工具转换：
 
-    python3 deploy/demo/pcd_to_csv.py <你的.pcd文件> /tmp/map.csv
+    python3 map-engine/tools/pcd_to_csv.py <你的.pcd文件> /tmp/map.csv
 
 再「配置点云」加载生成的 CSV 即可（相机自动取景）。
 效果见 docs/screenshots/real-ndt-map-2d.png / real-ndt-map-3d.png。
@@ -54,15 +66,15 @@ PGM + YAML（ROS map_server 格式，车端导航栈可直接用）。实施计�
 ## 远程接管驾驶舱
 
 左上视频墙（1/2/4 画面切换，含前/后/左/右机位 + 融合鸟瞰 BEV + 360° 环视；
-阶段 1 模拟画面，阶段 2 换 WebRTC 真流）；左中点云；底部地图走天地图 WMTS
-（配置 tk 后启用，未配置降级 OSM 演示），车辆按遥测坐标落图留轨迹；
+只显示真实 WebRTC 媒体会话）；左中点云；底部地图走已配置的天地图 WMTS，
+未配置或不可用时显示明确不可用状态；车辆按真实遥测坐标落图留轨迹；
 右上接管卡（状态/驾驶员/租约/fencing）+ 底盘卡（轮速/转向/电量/底盘类型：
 阿克曼 / 四轮四转 / 差速AGV）；最右上切换控制车辆。
 
 申请接管 / 续租 / 交还控制权 走 fleet-hub -> control-authority（租约 + fencing）；
 紧急停车为红色二次确认（3 秒内再点执行），指令被车端接受即刻出 critical 事件。
 
-## 阶段划分
+## 运行边界
 
-- 阶段 1：视频为模拟画面；终端为 hub 模拟回显；登录 /login 占位；
-- 阶段 2：WebRTC 双路视频、workspace-agent 真 PTY、OIDC 登录（nginx auth_request）。
+视频、终端、地图和车辆状态都必须来自已授权的真实服务。依赖不可用时页面保留
+操作上下文并显示原因，不以固定图像、回显文本、内置车辆或浏览器本地状态替代。

@@ -66,6 +66,13 @@ export default function NavIcon({ name }: { name: string }) {
           <path d="M6.6 13.6a1.5 1.5 0 0 0 2.8 0" />
         </svg>
       );
+    case "shield": // 系统审计
+      return (
+        <svg {...common}>
+          <path d="M8 1.8 3 3.6v4.2c0 3.2 2.1 5.3 5 6.4 2.9-1.1 5-3.2 5-6.4V3.6L8 1.8Z" />
+          <path d="M5.8 8l1.6 1.6L10.5 6.5" />
+        </svg>
+      );
     case "terminal": // 远程终端
       return (
         <svg {...common}>

@@ -1,9 +1,11 @@
-// 地图编辑页（从「地图中心」点编辑进入，独立页面）。
-// 做法对齐 SUSTechPOINTS/CVAT 的 2D 标注交互：多边形套索（点选加点、双击闭合），
+// 地图编辑页（从「地图中心」点编辑进入，独立页面）。三维/二维统一：
+// 顶栏可切「2D 编辑 / 3D 查看」，3D 为服务端解析的 .pcd/.csv 点云只读视图。
+// 2D 做法对齐 SUSTechPOINTS/CVAT 的标注交互：多边形套索（点选加点、双击闭合），
 // 擦除=把圈内格子涂成自由（白），恢复=圈内还原原图；原始数据只读，
 // 保存时把最终 2D 图 + 操作记录提交 /api/maps/{id}/edit 落成新版本。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchMaps, mapFileURL, saveMapEdit } from "../api";
+import { convertMap, fetchMaps, mapFileURL, mapHas3D, saveMapEdit } from "../api";
+import PcdViewer from "../components/PcdViewer";
 import type { MapEntry, MapVersion } from "../types";
 
 interface Props {
@@ -28,6 +30,9 @@ export default function MapEdit({ mapId, onBack }: Props) {
   const [draft, setDraft] = useState<[number, number][] | null>(null);
   const [status, setStatus] = useState("加载中…");
   const [tick, setTick] = useState(0); // 视图变化触发重绘
+  const [mode, setMode] = useState<"2d" | "3d">("2d"); // 三维/二维统一视图切换
+  const [has3d, setHas3D] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0); // 3D→2D 后重载
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -50,12 +55,15 @@ export default function MapEdit({ mapId, onBack }: Props) {
         }
         if (stop) return;
         setEntry(m);
+        setHas3D(mapHas3D(m));
+        let foundPng = false;
         for (let i = m.versions.length - 1; i >= 0; i--) {
           const v = m.versions[i];
           const png = v.files.find((f) => f.endsWith(".png"));
           if (png) {
             setVer(v);
             setPngName(png);
+            foundPng = true;
             const img = new Image();
             img.onload = () => {
               imgRef.current = img;
@@ -79,6 +87,14 @@ export default function MapEdit({ mapId, onBack }: Props) {
             break;
           }
         }
+        if (!foundPng) {
+          if (mapHas3D(m)) {
+            setMode("3d");
+            setStatus("还没有 2D 栅格：先查看三维，或点顶栏「一键 3D→2D」生成后再编辑");
+          } else {
+            setStatus("该地图没有可编辑的 2D 栅格（.png）版本");
+          }
+        }
       } catch {
         setStatus("加载失败（后端不可达？）");
       }
@@ -86,7 +102,7 @@ export default function MapEdit({ mapId, onBack }: Props) {
     return () => {
       stop = true;
     };
-  }, [mapId]);
+  }, [mapId, reloadTick]);
 
   // 重绘：原图 + 依次叠加操作（擦除=涂白，恢复=圈内还原原图）
   const draw = useCallback(() => {
@@ -211,20 +227,27 @@ export default function MapEdit({ mapId, onBack }: Props) {
     dragRef.current = null;
   };
 
-  const onWheel = (e: React.WheelEvent) => {
+  // 滚轮缩放：原生非 passive 监听 + preventDefault，避免触控板捏合缩放整个页面。
+  useEffect(() => {
+    if (mode !== "2d") return;
     const cv = canvasRef.current;
     if (!cv) return;
-    const rect = cv.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    const v = viewRef.current;
-    const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-    const ns = Math.max(0.05, Math.min(16, v.scale * k));
-    v.ox = mx - ((mx - v.ox) / v.scale) * ns;
-    v.oy = my - ((my - v.oy) / v.scale) * ns;
-    v.scale = ns;
-    setTick((t) => t + 1);
-  };
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = cv.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const v = viewRef.current;
+      const k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const ns = Math.max(0.05, Math.min(16, v.scale * k));
+      v.ox = mx - ((mx - v.ox) / v.scale) * ns;
+      v.oy = my - ((my - v.oy) / v.scale) * ns;
+      v.scale = ns;
+      setTick((t) => t + 1);
+    };
+    cv.addEventListener("wheel", handler, { passive: false });
+    return () => cv.removeEventListener("wheel", handler);
+  }, [mode]);
 
   const undo = () => {
     setOps((prev) => {
@@ -280,6 +303,19 @@ export default function MapEdit({ mapId, onBack }: Props) {
     }
   };
 
+  // 编辑页内一键 3D→2D（与地图中心同一接口），完成后重载进入 2D 编辑
+  const doConvertHere = async () => {
+    setStatus("3D→2D 转换中…");
+    try {
+      await convertMap(mapId);
+      setStatus("3D→2D 完成，重新加载…");
+      setMode("2d");
+      setReloadTick((t) => t + 1);
+    } catch (e) {
+      setStatus("转换失败：" + String(e));
+    }
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
       <div className="row" style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", gap: 8, flexWrap: "wrap" }}>
@@ -287,37 +323,59 @@ export default function MapEdit({ mapId, onBack }: Props) {
         <span style={{ fontWeight: 700 }}>{entry ? entry.name : mapId}</span>
         {ver && <span className="muted">正在编辑 v{ver.version}（{ver.note}）</span>}
         <span style={{ flex: 1 }} />
-        <button className={"btn small" + (tool === "erase" ? " primary" : "")} onClick={() => { setTool("erase"); setDraft(null); }}>
+        <button
+          className={"btn small" + (mode === "2d" ? " primary" : "")}
+          disabled={!ver}
+          title={ver ? "2D 栅格编辑（套索擦除/恢复）" : "还没有 2D 栅格版本"}
+          onClick={() => setMode("2d")}
+        >2D 编辑</button>
+        <button
+          className={"btn small" + (mode === "3d" ? " primary" : "")}
+          disabled={!has3d}
+          title={has3d ? "三维点云只读查看（.pcd/.csv）" : "该地图没有 3D 点云版本"}
+          onClick={() => setMode("3d")}
+        >3D 查看</button>
+        {!ver && has3d && (
+          <button className="btn small" onClick={() => void doConvertHere()}>一键 3D→2D</button>
+        )}
+        <button className={"btn small" + (tool === "erase" ? " primary" : "")} disabled={mode === "3d"} onClick={() => { setTool("erase"); setDraft(null); }}>
           套索擦除
         </button>
-        <button className={"btn small" + (tool === "restore" ? " primary" : "")} onClick={() => { setTool("restore"); setDraft(null); }}>
+        <button className={"btn small" + (tool === "restore" ? " primary" : "")} disabled={mode === "3d"} onClick={() => { setTool("restore"); setDraft(null); }}>
           套索恢复
         </button>
-        <button className={"btn small" + (tool === "pan" ? " primary" : "")} onClick={() => { setTool("pan"); setDraft(null); }}>
+        <button className={"btn small" + (tool === "pan" ? " primary" : "")} disabled={mode === "3d"} onClick={() => { setTool("pan"); setDraft(null); }}>
           平移
         </button>
-        <button className="btn small" disabled={!ops.length} onClick={undo}>撤销</button>
-        <button className="btn small" disabled={!redo.length} onClick={redoOp}>重做</button>
-        <button className="btn small danger" disabled={!ops.length} onClick={() => { setOps([]); setRedo([]); }}>清空操作</button>
-        <button className="btn small primary" disabled={!ops.length} onClick={() => void save()}>保存为新版本</button>
+        <button className="btn small" disabled={mode === "3d" || !ops.length} onClick={undo}>撤销</button>
+        <button className="btn small" disabled={mode === "3d" || !redo.length} onClick={redoOp}>重做</button>
+        <button className="btn small danger" disabled={mode === "3d" || !ops.length} onClick={() => { setOps([]); setRedo([]); }}>清空操作</button>
+        <button className="btn small primary" disabled={mode === "3d" || !ops.length} onClick={() => void save()}>保存为新版本</button>
       </div>
       <div className="muted" style={{ padding: "6px 14px", fontSize: 11 }}>
-        {tool === "pan"
+        {mode === "3d"
+          ? "3D 查看为只读：拖拽旋转 · 滚轮缩放 · 右键平移；编辑栅格请切回「2D 编辑」"
+          : tool === "pan"
           ? "拖拽平移，滚轮缩放"
           : "单击加点画多边形，双击或点回起点闭合；擦除=圈内变自由（白），恢复=圈内还原原图；滚轮缩放，右键/中键拖拽平移"}
         {status ? <span style={{ marginLeft: 12, color: "var(--accent)" }}>{status}</span> : null}
       </div>
       <div ref={wrapRef} style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        <canvas
-          ref={canvasRef}
-          style={{ position: "absolute", inset: 0, cursor: tool === "pan" ? "grab" : "crosshair" }}
-          onClick={onClick}
-          onDoubleClick={closePoly}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onWheel={onWheel}
-        />
+        {mode === "3d" ? (
+          <div style={{ position: "absolute", inset: 0 }}>
+            <PcdViewer mapId={mapId} height="100%" />
+          </div>
+        ) : (
+          <canvas
+            ref={canvasRef}
+            style={{ position: "absolute", inset: 0, cursor: tool === "pan" ? "grab" : "crosshair" }}
+            onClick={onClick}
+            onDoubleClick={closePoly}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+          />
+        )}
       </div>
     </div>
   );

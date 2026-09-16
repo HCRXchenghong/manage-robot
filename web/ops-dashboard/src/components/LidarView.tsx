@@ -1,9 +1,7 @@
 // 激光雷达点云地图（计划任务 4 重点）：
 //  - 2D 鸟瞰 / 3D 轨道一键切换；拖拽旋转(3D)/平移(2D)、滚轮缩放、点大小可调
-//  - 多车同屏：每车点云按 pose 放入统一世界系；颜色按状态
-//    （绿=行驶、黄=空闲、灰=离线、红=告警）；静态基础设施为暗蓝
-//  - 数据源可配置：默认 /api/pointcloud；「配置点云」可本地加载
-//    JSON/CSV（每行 x,y,z[,intensity]），替换静态场景、保留车辆
+//  - 数据源：仅加载选中车辆上传的真实 PCD/CSV 地图；未上传时明确提示
+//  - 「配置点云」可本地加载 JSON/CSV（每行 x,y,z[,intensity]）用于离线查看
 //    加载自定义地图后相机自动取景（包围盒居中），静态点按高度渐变着色
 //  - 自动 3D→2D：BEV 高度切片投影生成占据网格（bev.ts，做法对齐 octomap_server），
 //    可导出 ROS map_server 三件套（PNG + PGM + YAML）
@@ -35,7 +33,7 @@ const STATUS_CSS: Record<string, string> = {
 };
 
 const MAX_POINTS = 100000;
-const SCENE_CENTER = new THREE.Vector3(120, 0, 90);
+const EMPTY_CENTER = new THREE.Vector3(0, 0, 0);
 
 // 点云数据 (x, y 地面, z 高度) -> three.js (x, z->y 高度, y->z)
 function buildGeometry(
@@ -238,7 +236,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
   const centerOn = (id: string | null | undefined, fallbackReset: boolean) => {
     const c = controlsRef.current;
     const v = snap.vehicles.find((x) => x.vehicle_id === id);
-    if (!c || !v) {
+    if (!c || !v || !v.pose.valid) {
       if (fallbackReset) setRigKey((k) => k + 1);
       return;
     }
@@ -259,13 +257,21 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
   };
 
   const load = useCallback(() => {
-    fetchPointCloud()
+    if (!selectedId) {
+      setCloud(null);
+      setError("请选择一辆车以加载其上传的真实 3D 地图。");
+      return;
+    }
+    fetchPointCloud(selectedId)
       .then((c) => {
         setCloud(c);
         setError("");
       })
-      .catch((e) => setError("点云加载失败（后端不可达时地图仅显示车辆标记）：" + String(e)));
-  }, []);
+      .catch((e) => {
+        setCloud(null);
+        setError("真实点云不可用：" + String(e).replace(/^Error: /, ""));
+      });
+  }, [selectedId]);
   useEffect(() => {
     load();
   }, [load]);
@@ -276,12 +282,13 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
     return buildGeometry(src, STATIC_RGB, true);
   }, [cloud, customStatic]);
 
-  // 视图取景：自定义地图按其包围盒自动居中取景；否则沿用默认合成场景中心
+  // 视图取景：按上传地图或本地文件的包围盒居中；空状态不虚构场站范围。
   const viewFit = useMemo(() => {
-    const center = SCENE_CENTER.clone();
-    let radius = 150;
-    if (customStatic && customStatic.positions.length >= 3) {
-      const p = customStatic.positions;
+    const source = customStatic ? customStatic.positions : cloud?.static.positions;
+    const center = EMPTY_CENTER.clone();
+    let radius = 20;
+    if (source && source.length >= 3) {
+      const p = source;
       let x0 = Infinity;
       let x1 = -Infinity;
       let y0 = Infinity;
@@ -301,7 +308,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
       }
     }
     return { center, radius };
-  }, [customStatic]);
+  }, [cloud, customStatic]);
 
   // 自动 3D→2D：当前点云投影为 BEV 占据网格（做法见 bev.ts）
   const bev = useMemo(() => {
@@ -380,7 +387,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
   const followVec = useMemo(() => {
     if (!follow || !selectedId) return null;
     const v = snap.vehicles.find((x) => x.vehicle_id === selectedId);
-    if (!v) return null;
+    if (!v || !v.pose.valid) return null;
     return new THREE.Vector3(v.pose.x, 0, v.pose.y);
   }, [follow, selectedId, snap.vehicles]);
 
@@ -428,7 +435,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
   const exportBev = () => {
     if (!bev) return;
     const base =
-      (customStatic ? customStatic.label.replace(/\.[^.]+$/, "") : "synthetic-map") + "-bev";
+      (customStatic ? customStatic.label.replace(/\.[^.]+$/, "") : "local-map") + "-bev";
     const S = 4;
     const canvas = document.createElement("canvas");
     canvas.width = bev.nx * S;
@@ -561,7 +568,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
               />
             </points>
           ))}
-          {snap.vehicles.map((v) => (
+          {snap.vehicles.filter((v) => v.pose.valid).map((v) => (
             <VehicleMarker
               key={v.vehicle_id}
               pose={v.pose}
@@ -584,7 +591,7 @@ export default function LidarView({ snap, selectedId, onSelect, onContext, focus
             </div>
           )}
         </div>
-        <div className="lidar-hint">{mode === "3d" ? "拖拽旋转 · 滚轮缩放" : "拖拽平移 · 滚轮缩放"}</div>
+        <div className="lidar-hint">{mode === "3d" ? "拖拽旋转 · 滚轮/捏合缩放" : "拖拽平移 · 滚轮/捏合缩放"}</div>
         {error && (
           <div
             className="lidar-hint"

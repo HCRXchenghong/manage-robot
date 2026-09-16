@@ -3,6 +3,7 @@ import type { FleetState } from "../api";
 import { fetchGroupNames, registerVehicle, uploadVehicleModel } from "../api";
 import Modal from "../components/Modal";
 import VehicleTable from "../components/VehicleTable";
+import { VideoConfPanel } from "../components/VideoConf";
 import type { Me } from "../types";
 
 interface Props {
@@ -17,6 +18,7 @@ export default function Vehicles({ fleet, me, onSelect }: Props) {
   const isAdmin = me.role !== "user";
   const [regOpen, setRegOpen] = useState(false);
   const [cfgId, setCfgId] = useState("");
+  const [cfgTab, setCfgTab] = useState<"twin" | "video">("twin");
   const [groups, setGroups] = useState<{ id: string; name: string }[]>([]);
   const [fid, setFid] = useState("");
   const [fvin, setFvin] = useState("");
@@ -101,6 +103,7 @@ export default function Vehicles({ fleet, me, onSelect }: Props) {
             ? (id) => {
                 setModelFile(null);
                 setMsg("");
+                setCfgTab("twin");
                 setCfgId(id);
               }
             : undefined
@@ -112,7 +115,7 @@ export default function Vehicles({ fleet, me, onSelect }: Props) {
           <div className="form-grid">
             <label>
               车辆 ID *
-              <input className="input" value={fid} onChange={(e) => setFid(e.target.value)} placeholder="如 sim-veh-002" />
+              <input className="input" value={fid} onChange={(e) => setFid(e.target.value)} placeholder="如 vehicle-001" />
             </label>
             <label>
               VIN
@@ -159,24 +162,35 @@ export default function Vehicles({ fleet, me, onSelect }: Props) {
       )}
 
       {cfgId && (
-        <Modal title={"孪生模型配置 · " + cfgId} onClose={() => setCfgId("")} width="min(520px, 94vw)">
-          <div className="muted" style={{ marginBottom: 10 }}>
-            上传 GLB 模型文件；上传后数字孪生页中心将使用该模型，未上传则用平台默认模型。
+        <Modal title={"车辆配置 · " + cfgId} onClose={() => setCfgId("")} width="min(860px, 94vw)">
+          <div className="vc-tabs" style={{ marginBottom: 12 }}>
+            <button className={"vc-tab" + (cfgTab === "twin" ? " on" : "")} onClick={() => setCfgTab("twin")}>孪生模型</button>
+            <button className={"vc-tab" + (cfgTab === "video" ? " on" : "")} onClick={() => setCfgTab("video")}>视频配置与标定</button>
           </div>
-          <input
-            type="file"
-            accept=".glb"
-            onChange={(e) => setModelFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
-          />
-          {msg && <div className="msg err">{msg}</div>}
-          <div className="btn-row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-            <button className="btn small" onClick={() => setCfgId("")}>
-              取消
-            </button>
-            <button className="btn small primary" disabled={busy || !modelFile} onClick={() => void submitModel()}>
-              上传
-            </button>
-          </div>
+          {cfgTab === "twin" && (
+            <>
+              <div className="muted" style={{ marginBottom: 10 }}>
+                上传该车辆的真实 GLB 模型；未上传时数字孪生页明确显示不可用，不使用平台默认模型。
+              </div>
+              <input
+                type="file"
+                accept=".glb"
+                onChange={(e) => setModelFile(e.target.files && e.target.files[0] ? e.target.files[0] : null)}
+              />
+              {msg && <div className="msg err">{msg}</div>}
+              <div className="btn-row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+                <button className="btn small" onClick={() => setCfgId("")}>
+                  取消
+                </button>
+                <button className="btn small primary" disabled={busy || !modelFile} onClick={() => void submitModel()}>
+                  上传
+                </button>
+              </div>
+            </>
+          )}
+          {cfgTab === "video" && (
+            <VideoConfPanel vehicle={fleet.snap.vehicles.find((v) => v.vehicle_id === cfgId) || null} />
+          )}
         </Modal>
       )}
     </div>

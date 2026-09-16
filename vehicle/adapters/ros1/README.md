@@ -15,21 +15,33 @@
       → 车端安全仲裁器校验（租约/fencing/TTL/限幅）
       → adapter.py 翻译成 can_msgs/ecu → ROS 1 总线
 
+    循迹（云 → 车 → 云）
+    云端 NavigationCommand → Gateway → ros1_node.py
+      → 真实 move_base action 逐个执行路点
+      → NavigationAck（接受/开始/完成/取消/失败）→ Gateway → Fleet
+
 ## 文件
 
 | 文件 | 角色 | 运行环境 |
 |---|---|---|
-| `adapter.py` | 翻译核心 + 自检（`--demo`） | 任意机器，无依赖 |
-| `ros1_node.py` | 车端真身：rospy 订阅/发布接线 | 仅小车（ROS 1 Noetic） |
+| `adapter.py` | 翻译核心 + 确定性自检（`--self-test`） | 任意机器，无依赖 |
+| `ros1_node.py` | 车端真身：rospy、Gateway UDS、Arbiter 执行器接线 | 仅小车（ROS 1 Noetic） |
 
 ## 现在就能验证
 
-    python3 adapter.py --demo
+    python3 adapter.py --self-test
 
 用真实字段样例跑 11 项翻译检查（7.2 km/h→2.0 m/s、90°→π/2、超速限幅等）。
 
-## 待实车标定的项（未冻结前禁止远驾）
+## 运行要求
 
-- `ecu.motor` 注释为“目标速度”，单位/语义未确认。
-- `shift_level` ↔ 挡位枚举映射是占位值。
-- 方向盘限幅 ±30°、急停阈值 0.5 均为占位值。
+`ros1_node.py` 必须同时提供 `--vehicle-id`、`--gateway-id`、`--gateway-uds`、
+`--arbiter-uds`、`--calibration`、`--navigation-action` 和 `--navigation-frame`。
+标定 JSON 必须包含版本、车速/转向限幅、
+制动阈值、挡位双向映射和驻车挡位；程序不会内置车型参数，也不会在缺少标定
+时以“安全默认值”执行控制。
+
+执行路径是：Safety Arbiter 校验通过 → `--arbiter-uds` → `ros1_node.py` →
+`can_msgs/ecu` → CAN bridge。Gateway UDS 的 Adapter 连接同时接收已认证的
+`NavigationCommand`；导航仅通过显式配置的真实 ROS 1 `move_base` action 执行，
+未连接 action server 时报告失败，不会伪造成功 ACK。

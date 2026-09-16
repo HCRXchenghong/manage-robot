@@ -1,27 +1,30 @@
 package main
 
-// state.go：车队状态模型（内存真相 + 异步入库 + 事件推导）。
+// state.go：车队状态实时缓存 + PostgreSQL 持久化 + 事件推导。
 //
 // 判定口径（与 docs/plan-operations-dashboard.md 任务 2 一致）：
 //   - 在线 = 6 秒内收到过遥测。遥测由车端仲裁器驱动，车端进程死亡则
 //     遥测立停；gateway 的 status 心跳只代表网关怀着，不用于车辆在线
-//     判定——这样才能成立「杀 vehicle_side -> 6s 内离线」的演示剧本。
+//     判定——车端进程或网络中断后会在 6 秒内反映为离线。
 //   - 巡检 1Hz；车速历史环 150 点；事件环上限 200；
-//   - 入库走异步队列（容量 256），绝不阻塞 MQTT 回调。
+//   - 入库优先走异步队列（容量 256）；队列满时执行有界同步回退并计量背压，
+//     不静默丢弃持久化写入。
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
-	"encoding/json"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math"
-	"net"
 	"sort"
 	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"google.golang.org/protobuf/proto"
+	platformv1 "robot-agent/protocols/platform/v1"
 )
 
 const (
@@ -36,9 +39,11 @@ const (
 // ---------- /api/fleet 契约类型（前端唯一契约，字段名冻结勿改） ----------
 
 type Pose struct {
-	X   float64 `json:"x"`
-	Y   float64 `json:"y"`
-	Yaw float64 `json:"yaw"`
+	Valid bool    `json:"valid"`
+	Frame string  `json:"frame,omitempty"`
+	X     float64 `json:"x"`
+	Y     float64 `json:"y"`
+	Yaw   float64 `json:"yaw"`
 }
 
 // GpsSnap 车端 GPS 定位（WGS-84）；前端负责 GCJ-02 纠偏后上高德底图。
@@ -87,6 +92,7 @@ type TakeoverSnap struct {
 type EventSnap struct {
 	TsNS      int64  `json:"ts_ns"`
 	Level     string `json:"level"`
+	Kind      string `json:"kind"` // veh=车辆侧（告警与事件）；sys=系统侧（系统审计）
 	VehicleID string `json:"vehicle_id,omitempty"`
 	Text      string `json:"text"`
 }
@@ -98,42 +104,63 @@ type FleetSnap struct {
 	Events       []EventSnap   `json:"events"`
 }
 
+// RuntimeStatus exposes dependency readiness separately from vehicle telemetry.
+// A reachable HTTP process is not evidence that its database or MQTT transport
+// is usable.
+type RuntimeStatus struct {
+	DatabaseReady         bool   `json:"database_ready"`
+	MQTTReady             bool   `json:"mqtt_ready"`
+	PersistentWritesReady bool   `json:"persistent_writes_ready"`
+	Mode                  string `json:"mode"`
+}
+
 // signalVal 是解析后的单条 SignalUpdate 信号。
 type signalVal struct {
-	Path string
-	Num  *float64
-	Text *string
+	Path     string
+	Num      *float64
+	Text     *string
+	SampleAt time.Time
 }
 
 // vehicleState 单车可变状态（受 State.mu 保护）。
 type vehicleState struct {
-	id            string
-	group         string
-	chassis       string
-	online        bool
-	lastSeen      time.Time // 最近一次遥测时刻
-	mode          string
-	speedMPS      float64
-	soc           float64
-	voltage       float64
-	gear          string
-	steerRad      float64
-	wheelSpeeds   [4]float64
-	speedHist     []float64
-	throttleHist  []float64
-	brakeHist     []float64
-	throttlePct   float64
-	brakePct      float64
-	accelMps2     float64
-	accelHist     []float64
-	cabinTempC    float64
-	cabinHumidity float64
-	gpsFix        bool
-	gpsLat        float64
-	gpsLon        float64
-	gpsAlt        float64
-	capabilities  map[string]string
-	lastSampleAt  time.Time // 上次入库时刻（抽稀用）
+	id              string
+	gatewayID       string
+	group           string
+	chassis         string
+	online          bool
+	lastSeen        time.Time // 最近一次遥测时刻
+	mode            string
+	speedMPS        float64
+	soc             float64
+	voltage         float64
+	gear            string
+	steerRad        float64
+	wheelSpeeds     [4]float64
+	speedHist       []float64
+	throttleHist    []float64
+	brakeHist       []float64
+	throttlePct     float64
+	brakePct        float64
+	accelMps2       float64
+	accelHist       []float64
+	cabinTempC      float64
+	cabinHumidity   float64
+	gpsFix          bool
+	gpsLat          float64
+	gpsLon          float64
+	gpsAlt          float64
+	poseValid       bool
+	poseValiditySet bool
+	poseXSeen       bool
+	poseYSeen       bool
+	poseYawSeen     bool
+	poseFrame       string
+	poseX           float64
+	poseY           float64
+	poseYaw         float64
+	capabilities    map[string]string
+	lastSampleAt    time.Time // 上次入库时刻（抽稀用）
 }
 
 type dbJob func(ctx context.Context, db *sql.DB)
@@ -145,42 +172,102 @@ type State struct {
 	events   []EventSnap // 头部最新
 	takeover TakeoverSnap
 
+	// MQTT callbacks are configured with SetOrderMatters(false). A per-vehicle
+	// mutex keeps the pure projection, durable transaction, and in-memory
+	// publication in one order even when two valid packets arrive concurrently.
+	vehicleLocksMu sync.Mutex
+	vehicleLocks   map[string]*sync.Mutex
+
 	hub  *Hub    // WS 广播器（非 nil）
-	db   *sql.DB // nil = 纯内存模式
+	db   *sql.DB // 仅显式开发诊断模式下可以为 nil
 	dbCh chan dbJob
 
-	authorityAddr string
-	mqttPub       mqtt.Client // OnConnect 后由 mqtt.go 注入（发布车端下行话题）
-	startAt       time.Time
+	mqttPub           mqtt.Client // OnConnect 后由 mqtt.go 注入（发布车端下行话题）
+	envelopeAuthKey   []byte
+	outboundSessionID string
+	outboundSeq       map[string]uint64
+	outboxWake        chan struct{}
+	navStore          *NavStore
+	mapStore          *MapStore
+	metrics           *RuntimeMetrics
+	metricsToken      string
+	startAt           time.Time
 }
 
-func NewState(hub *Hub, db *sql.DB, authorityAddr string) *State {
+func NewState(hub *Hub, db *sql.DB, authKeys ...[]byte) *State {
+	var envelopeAuthKey []byte
+	if len(authKeys) > 0 {
+		envelopeAuthKey = append([]byte(nil), authKeys[0]...)
+	}
 	s := &State{
-		vehicles:      map[string]*vehicleState{},
-		events:        []EventSnap{},
-		hub:           hub,
-		db:            db,
-		dbCh:          make(chan dbJob, dbQueueCap),
-		authorityAddr: authorityAddr,
-		startAt:       time.Now(),
+		vehicles:          map[string]*vehicleState{},
+		vehicleLocks:      map[string]*sync.Mutex{},
+		events:            []EventSnap{},
+		hub:               hub,
+		db:                db,
+		dbCh:              make(chan dbJob, dbQueueCap),
+		envelopeAuthKey:   envelopeAuthKey,
+		outboundSessionID: newOutboundSessionID(),
+		outboundSeq:       map[string]uint64{},
+		outboxWake:        make(chan struct{}, 1),
+		metrics:           newRuntimeMetrics(),
+		startAt:           time.Now(),
 	}
 	go s.dbLoop()
 	go s.sweepLoop()
 	go s.broadcastLoop()
 	go s.retentionLoop()
+	go s.outboxLoop()
 	s.loadVehiclesFromDB()
 	return s
 }
 
-// demoPoses 阶段 1 内置演示位姿表（每车固定坐标）；阶段 2 接真实定位。
-var demoPoses = []Pose{
-	{X: 120, Y: 80, Yaw: 0.6},
-	{X: 45, Y: 140, Yaw: 2.1},
-	{X: 195, Y: 55, Yaw: 4.0},
-	{X: 85, Y: 30, Yaw: 1.2},
+func (s *State) lockVehicle(vehicleID string) *sync.Mutex {
+	if s == nil {
+		return &sync.Mutex{}
+	}
+	s.vehicleLocksMu.Lock()
+	defer s.vehicleLocksMu.Unlock()
+	if s.vehicleLocks == nil {
+		s.vehicleLocks = map[string]*sync.Mutex{}
+	}
+	lock := s.vehicleLocks[vehicleID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		s.vehicleLocks[vehicleID] = lock
+	}
+	return lock
 }
 
-func poseFor(id string) Pose { return demoPoses[int(fnvOf(id))%len(demoPoses)] }
+func (s *State) setNavStore(ns *NavStore) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.navStore = ns
+	s.mu.Unlock()
+}
+
+func (s *State) setMapStore(ms *MapStore) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.mapStore = ms
+	s.mu.Unlock()
+}
+
+// newOutboundSessionID prevents a fleet-hub restart from reusing the same
+// navigation session with sequence numbers starting at one again. A fresh
+// session makes downstream deduplication safe across process restarts; failure
+// to obtain randomness fails navigation publication closed.
+func newOutboundSessionID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
+	return "fleet-navigation-" + hex.EncodeToString(b)
+}
 
 // ---------- 入口（MQTT 侧调用） ----------
 
@@ -194,45 +281,29 @@ func (s *State) ensureVehicleLocked(id string) *vehicleState {
 	return v
 }
 
-// HandleRegister 处理 vehicle/{id}/register（retained 能力注册）。
-func (s *State) HandleRegister(id, gatewayID string, caps map[string]string, group string) {
-	s.mu.Lock()
-	v := s.ensureVehicleLocked(id)
-	if group != "" {
-		v.group = group
+func cloneVehicleState(v *vehicleState) *vehicleState {
+	if v == nil {
+		return &vehicleState{capabilities: map[string]string{}}
 	}
-	if caps["chassis"] != "" {
-		v.chassis = caps["chassis"]
-	}
-	regGroup, regChassis := v.group, v.chassis
-	for k, val := range caps {
-		if val != "" {
-			v.capabilities[k] = val
-		}
-	}
-	s.mu.Unlock()
-
-	s.pushEvent("info", id, fmt.Sprintf("车辆注册（网关 %s，栈 %s）", gatewayID, caps["stack"]))
-	s.submitDB(func(ctx context.Context, db *sql.DB) {
-		if _, err := db.ExecContext(ctx,
-			"INSERT INTO vehicles(id, gateway_id, stack, last_seen, group_id, chassis) VALUES ($1,$2,$3,now(),$4,$5) ON CONFLICT (id) DO UPDATE SET gateway_id=$2, stack=$3, last_seen=now(), group_id=COALESCE(NULLIF($4,''), vehicles.group_id), chassis=COALESCE(NULLIF($5,''), vehicles.chassis)",
-			id, gatewayID, caps["stack"], regGroup, regChassis); err != nil {
-			log.Printf("vehicles 入库失败: %v", err)
-		}
-	})
+	copy := *v
+	copy.speedHist = append([]float64(nil), v.speedHist...)
+	copy.throttleHist = append([]float64(nil), v.throttleHist...)
+	copy.brakeHist = append([]float64(nil), v.brakeHist...)
+	copy.accelHist = append([]float64(nil), v.accelHist...)
+	copy.capabilities = copyMap(v.capabilities)
+	return &copy
 }
 
-// HandleTelemetry 处理 vehicle/{id}/telemetry（SignalUpdate，2Hz）。
-func (s *State) HandleTelemetry(id string, sigs []signalVal) {
-	now := time.Now()
-
-	s.mu.Lock()
-	v := s.ensureVehicleLocked(id)
-	cameOnline := !v.online
+// applySignalUpdateLocked applies only a validated SignalUpdate to a private
+// projection. It deliberately contains no I/O and no implicit defaults: a
+// missing signal leaves its last confirmed value unchanged, while the online
+// bit is driven only by receipt of a validated packet.
+func applySignalUpdateLocked(v *vehicleState, sigs []signalVal, now time.Time) {
+	if v == nil {
+		return
+	}
 	v.online = true
 	v.lastSeen = now
-	modeBefore := v.mode
-
 	for _, sg := range sigs {
 		switch sg.Path {
 		case "Vehicle.Speed":
@@ -327,8 +398,88 @@ func (s *State) HandleTelemetry(id string, sigs []signalVal) {
 			if sg.Num != nil {
 				v.gpsAlt = *sg.Num
 			}
+		case "Platform.Autonomy.Localization.Pose.Valid":
+			if sg.Num != nil {
+				v.poseValiditySet = true
+				v.poseValid = *sg.Num > 0.5
+			}
+		case "Platform.Autonomy.Localization.Pose.X":
+			if sg.Num != nil {
+				v.poseX = *sg.Num
+				v.poseXSeen = true
+			}
+		case "Platform.Autonomy.Localization.Pose.Y":
+			if sg.Num != nil {
+				v.poseY = *sg.Num
+				v.poseYSeen = true
+			}
+		case "Platform.Autonomy.Localization.Pose.Yaw":
+			if sg.Num != nil {
+				v.poseYaw = *sg.Num
+				v.poseYawSeen = true
+			}
+		case "Platform.Autonomy.Localization.Pose.Frame":
+			if sg.Text != nil {
+				v.poseFrame = *sg.Text
+			}
 		}
 	}
+	if !v.poseValiditySet {
+		v.poseValid = v.poseXSeen && v.poseYSeen && v.poseYawSeen
+	}
+}
+
+// HandleRegister 处理 vehicle/{id}/register（retained 能力注册）。
+func (s *State) HandleRegister(id, gatewayID string, caps map[string]string, group string) {
+	vehicleLock := s.lockVehicle(id)
+	vehicleLock.Lock()
+	defer vehicleLock.Unlock()
+	s.mu.Lock()
+	v := s.ensureVehicleLocked(id)
+	if gatewayID != "" {
+		v.gatewayID = gatewayID
+	}
+	if group != "" {
+		v.group = group
+	}
+	if caps["chassis"] != "" {
+		v.chassis = caps["chassis"]
+	}
+	regGroup, regChassis := v.group, v.chassis
+	for k, val := range caps {
+		if val != "" {
+			v.capabilities[k] = val
+		}
+	}
+	s.mu.Unlock()
+
+	s.pushEvent("info", id, fmt.Sprintf("车辆注册（网关 %s，栈 %s）", gatewayID, caps["stack"]), "veh")
+	s.submitDB(func(ctx context.Context, db *sql.DB) {
+		if _, err := db.ExecContext(ctx,
+			"INSERT INTO vehicles(id, gateway_id, stack, last_seen, group_id, chassis) VALUES ($1,$2,$3,now(),$4,$5) ON CONFLICT (id) DO UPDATE SET gateway_id=$2, stack=$3, last_seen=now(), group_id=COALESCE(NULLIF($4,''), vehicles.group_id), chassis=COALESCE(NULLIF($5,''), vehicles.chassis)",
+			id, gatewayID, caps["stack"], regGroup, regChassis); err != nil {
+			log.Printf("vehicles 入库失败: %v", err)
+		}
+	})
+}
+
+// HandleTelemetry 处理 vehicle/{id}/telemetry（SignalUpdate，2Hz）。
+func (s *State) HandleTelemetry(id string, sigs []signalVal) {
+	now := time.Now()
+	vehicleLock := s.lockVehicle(id)
+	vehicleLock.Lock()
+	defer vehicleLock.Unlock()
+
+	s.mu.Lock()
+	v := s.ensureVehicleLocked(id)
+	v = cloneVehicleState(v)
+	v.id = id
+	cameOnline := !v.online
+	v.online = true
+	v.lastSeen = now
+	modeBefore := v.mode
+
+	applySignalUpdateLocked(v, sigs, now)
 
 	doSample := now.Sub(v.lastSampleAt) >= sampleEveryS*time.Second
 	if doSample {
@@ -336,19 +487,172 @@ func (s *State) HandleTelemetry(id string, sigs []signalVal) {
 	}
 	stMode, stSpeed := v.mode, v.speedMPS
 	stSOC, stVolt, stGear, stSteer := v.soc, v.voltage, v.gear, v.steerRad
+	stGPSFix, stGPSLat, stGPSLon, stGPSAlt := v.gpsFix, v.gpsLat, v.gpsLon, v.gpsAlt
+	stPoseValid, stPoseFrame, stPoseX, stPoseY, stPoseYaw := v.poseValid, v.poseFrame, v.poseX, v.poseY, v.poseYaw
 	online := v.online
+	s.vehicles[id] = v
 	s.mu.Unlock()
 
 	if cameOnline {
-		s.pushEvent("info", id, "车辆上线（遥测恢复）")
+		s.pushEvent("info", id, "车辆上线（遥测恢复）", "veh")
 	}
 	if modeBefore != "" && modeBefore != stMode {
 		s.onModeChange(id, modeBefore, stMode)
 	}
 	if doSample {
 		s.persistSample(id, sigs)
-		s.persistVehicleState(id, online, stMode, stSpeed, stSOC, stVolt, stGear, stSteer)
+		s.persistVehicleState(id, online, stMode, stSpeed, stSOC, stVolt, stGear, stSteer,
+			stGPSFix, stGPSLat, stGPSLon, stGPSAlt, stPoseValid, stPoseFrame, stPoseX, stPoseY, stPoseYaw)
 	}
+}
+
+// ApplyTelemetryDurably is the production MQTT projection path. The validated
+// envelope's deduplication claim, vehicle last-seen/lifecycle projection,
+// latest vehicle_state and the sampled telemetry rows commit in one
+// PostgreSQL transaction. If any write fails, the sequence is not claimed and
+// the caller can safely accept a later QoS retry without silently losing a
+// vehicle state update.
+func (s *State) ApplyTelemetryDurably(ctx context.Context, registry *GatewayRegistry, vehicleID, gatewayID, messageType, sessionID string, sequence uint64, sigs []signalVal) (bool, error) {
+	if s == nil || s.db == nil || registry == nil || ctx == nil || vehicleID == "" || gatewayID == "" ||
+		messageType == "" || sessionID == "" || sequence == 0 || len(sigs) == 0 {
+		return false, fmt.Errorf("遥测权威投影字段无效")
+	}
+	vehicleLock := s.lockVehicle(vehicleID)
+	vehicleLock.Lock()
+	defer vehicleLock.Unlock()
+
+	receivedAt := time.Now().UTC()
+	s.mu.RLock()
+	current := s.vehicles[vehicleID]
+	next := cloneVehicleState(current)
+	if next.id == "" {
+		next.id = vehicleID
+	}
+	modeBefore := next.mode
+	cameOnline := !next.online
+	s.mu.RUnlock()
+
+	applySignalUpdateLocked(next, sigs, receivedAt)
+	doSample := next.lastSampleAt.IsZero() || receivedAt.Sub(next.lastSampleAt) >= sampleEveryS*time.Second
+	if doSample {
+		next.lastSampleAt = receivedAt
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return false, fmt.Errorf("开启遥测权威事务: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	accepted, err := registry.AcceptInboundSequenceTx(ctx, tx, vehicleID, gatewayID, messageType, sessionID, sequence)
+	if err != nil {
+		return false, err
+	}
+	if !accepted {
+		return false, nil
+	}
+	if err := persistTelemetryTx(ctx, tx, next, sigs, receivedAt, doSample); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("提交遥测权威事务: %w", err)
+	}
+
+	s.mu.Lock()
+	s.vehicles[vehicleID] = next
+	s.mu.Unlock()
+	if cameOnline {
+		s.pushEvent("info", vehicleID, "车辆上线（遥测恢复）", "veh")
+	}
+	if modeBefore != "" && modeBefore != next.mode {
+		s.onModeChange(vehicleID, modeBefore, next.mode)
+	}
+	return true, nil
+}
+
+func persistTelemetryTx(ctx context.Context, tx *sql.Tx, v *vehicleState, sigs []signalVal, receivedAt time.Time, doSample bool) error {
+	if tx == nil || v == nil || v.id == "" {
+		return fmt.Errorf("遥测事务字段无效")
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE vehicles SET last_seen=$2,
+		lifecycle_state=CASE WHEN lifecycle_state IN ('quarantined','retired','maintenance')
+			THEN lifecycle_state ELSE 'online' END
+		WHERE id=$1`, v.id, receivedAt)
+	if err != nil {
+		return fmt.Errorf("更新车辆在线事实: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		if err != nil {
+			return fmt.Errorf("确认车辆在线事实: %w", err)
+		}
+		return fmt.Errorf("车辆不存在，拒绝写入遥测权威事实")
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO vehicle_state
+		(vehicle_id, online, mode, speed_mps, soc, voltage, gear, steer_rad,
+		 gps_fix, gps_lat, gps_lon, gps_alt, pose_valid, pose_frame, pose_x, pose_y, pose_yaw, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+		ON CONFLICT (vehicle_id) DO UPDATE SET
+		 online=$2, mode=$3, speed_mps=$4, soc=$5, voltage=$6, gear=$7, steer_rad=$8,
+		 gps_fix=$9, gps_lat=$10, gps_lon=$11, gps_alt=$12, pose_valid=$13,
+		 pose_frame=$14, pose_x=$15, pose_y=$16, pose_yaw=$17, updated_at=$18`,
+		v.id, v.online, nullable(v.mode), v.speedMPS, v.soc, v.voltage, nullable(v.gear), v.steerRad,
+		v.gpsFix, nullableFloat(v.gpsLat, v.gpsFix), nullableFloat(v.gpsLon, v.gpsFix), nullableFloat(v.gpsAlt, v.gpsFix),
+		v.poseValid, nullable(v.poseFrame), nullableFloat(v.poseX, v.poseValid), nullableFloat(v.poseY, v.poseValid), nullableFloat(v.poseYaw, v.poseValid), receivedAt)
+	if err != nil {
+		return fmt.Errorf("更新 vehicle_state 权威事实: %w", err)
+	}
+	if !doSample {
+		return nil
+	}
+	for _, sg := range sigs {
+		var num, txt any
+		if sg.Num != nil {
+			num = *sg.Num
+		}
+		if sg.Text != nil {
+			txt = *sg.Text
+		}
+		if num == nil && txt == nil {
+			continue
+		}
+		sampleAt := sg.SampleAt
+		if sampleAt.IsZero() {
+			sampleAt = receivedAt
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO telemetry_samples(vehicle_id, ts, path, num, txt) VALUES ($1,$2,$3,$4,$5)`,
+			v.id, sampleAt, sg.Path, num, txt); err != nil {
+			return fmt.Errorf("写入 telemetry_samples 权威事实: %w", err)
+		}
+	}
+	return nil
+}
+
+func nullableFloat(value float64, valid bool) any {
+	if !valid {
+		return nil
+	}
+	return value
+}
+
+// HandleControlAck persists the vehicle-side execution result before the
+// message is considered part of the control evidence stream. The UDP relay
+// may return the same ACK to multiple operator links, while the MQTT dedup
+// ledger makes this operation idempotent across Fleet restarts.
+func (s *State) HandleControlAck(vehicleID, gatewayID, sourceLink string, ack *platformv1.ControlAck) error {
+	if s == nil || s.db == nil || ack == nil || vehicleID == "" || gatewayID == "" ||
+		ack.GetControlSessionId() == "" || ack.GetCommandSequence() == 0 {
+		return fmt.Errorf("ControlAck 持久化字段无效")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO control_acks
+		(control_session_id, command_sequence, vehicle_id, gateway_id, result, detail,
+		 applied_monotonic_ns, source_link)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (control_session_id, command_sequence, source_link) DO NOTHING`,
+		ack.GetControlSessionId(), ack.GetCommandSequence(), vehicleID, gatewayID,
+		ack.GetResult().String(), ack.GetDetail(), ack.GetAppliedMonotonicNs(), sourceLink)
+	return err
 }
 
 // onModeChange 推导模式切换事件（计划：minimum_risk=critical、stopped=warn）。
@@ -364,7 +668,7 @@ func (s *State) onModeChange(id, from, to string) {
 	case "autonomous":
 		level, txt = "info", "回到自动驾驶"
 	}
-	s.pushEvent(level, id, txt)
+	s.pushEvent(level, id, txt, "veh")
 }
 
 // ---------- 巡检与接管 ----------
@@ -375,7 +679,6 @@ func (s *State) sweepLoop() {
 	defer t.Stop()
 	for range t.C {
 		s.onlineSweep()
-		s.pollAuthorityOnce()
 	}
 }
 
@@ -391,64 +694,21 @@ func (s *State) onlineSweep() {
 	}
 	s.mu.Unlock()
 	for _, id := range gone {
-		s.pushEvent("critical", id, fmt.Sprintf("链路丢失：%d 秒无遥测，判定离线", onlineWindowS))
-	}
-}
-
-// pollAuthorityOnce 向 control-authority 发 {"op":"status"}（UDP 只读，不改状态）。
-// 失败/超时保留上一次状态，下一周期重试。
-func (s *State) pollAuthorityOnce() {
-	conn, err := net.DialTimeout("udp", s.authorityAddr, 300*time.Millisecond)
-	if err != nil {
-		return
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-	if _, err := conn.Write([]byte(`{"op":"status"}`)); err != nil {
-		return
-	}
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil {
-		return
-	}
-	var resp struct {
-		OK               bool   `json:"ok"`
-		Active           bool   `json:"active"`
-		Driver           string `json:"driver"`
-		LeaseID          string `json:"lease_id"`
-		Fencing          int64  `json:"fencing"`
-		ValidUntilUnixNS int64  `json:"valid_until_unix_ns"`
-	}
-	if err := json.Unmarshal(buf[:n], &resp); err != nil || !resp.OK {
-		return
-	}
-	tk := TakeoverSnap{Active: resp.Active, Driver: resp.Driver, LeaseID: resp.LeaseID, Fencing: resp.Fencing}
-	if resp.Active && resp.ValidUntilUnixNS > 0 {
-		tk.SecondsLeft = math.Max(0, float64(resp.ValidUntilUnixNS-time.Now().UnixNano())/1e9)
-	}
-
-	s.mu.Lock()
-	prev := s.takeover
-	s.takeover = tk
-	s.mu.Unlock()
-
-	switch {
-	case !prev.Active && tk.Active:
-		s.pushEvent("warn", "", fmt.Sprintf("接管开始：%s（租约 %s）", tk.Driver, tk.LeaseID))
-		s.persistLease(tk)
-	case prev.Active && !tk.Active:
-		s.pushEvent("info", "", "控制权已交还（接管结束）")
-	case prev.Active && tk.Active && prev.Driver != tk.Driver:
-		s.pushEvent("warn", "", fmt.Sprintf("接管驾驶员变更：%s -> %s", prev.Driver, tk.Driver))
+		s.pushEvent("critical", id, fmt.Sprintf("链路丢失：%d 秒无遥测，判定离线", onlineWindowS), "veh")
+		s.submitDB(func(ctx context.Context, db *sql.DB) {
+			// A quarantined/retired/maintenance vehicle must not be silently
+			// reclassified by a stale telemetry sweep.
+			_, _ = db.ExecContext(ctx, `UPDATE vehicles SET lifecycle_state='offline'
+				WHERE id=$1 AND lifecycle_state NOT IN ('quarantined','retired','maintenance')`, id)
+		})
 	}
 }
 
 // ---------- 事件 ----------
 
-// pushEvent 追加事件环（头最新）+ WS 即时推送 + 入库。
-func (s *State) pushEvent(level, vehicleID, txt string) {
-	ev := EventSnap{TsNS: time.Now().UnixNano(), Level: level, VehicleID: vehicleID, Text: txt}
+// pushEvent 追加事件环（头最新）+ WS 即时推送 + 入库。kind：veh/sys（事件分流）。
+func (s *State) pushEvent(level, vehicleID, txt, kind string) {
+	ev := EventSnap{TsNS: time.Now().UnixNano(), Level: level, Kind: kind, VehicleID: vehicleID, Text: txt}
 	s.mu.Lock()
 	evGroup := ""
 	if vehicleID != "" {
@@ -463,13 +723,11 @@ func (s *State) pushEvent(level, vehicleID, txt string) {
 	s.mu.Unlock()
 
 	log.Printf("[event] %s %s %s", level, vehicleID, txt)
-	if b, err := json.Marshal(map[string]any{"type": "event", "data": ev}); err == nil {
-		s.hub.Broadcast(b)
-	}
+	s.hub.PublishEvent(ev)
 	s.submitDB(func(ctx context.Context, db *sql.DB) {
 		if _, err := db.ExecContext(ctx,
-			"INSERT INTO events(ts, vehicle_id, level, text, group_id) VALUES ($1,$2,$3,$4,$5)",
-			time.Unix(0, ev.TsNS), nullable(vehicleID), level, txt, evGroup); err != nil {
+			"INSERT INTO events(ts, vehicle_id, level, text, group_id, kind) VALUES ($1,$2,$3,$4,$5,$6)",
+			time.Unix(0, ev.TsNS), nullable(vehicleID), level, txt, evGroup, kind); err != nil {
 			log.Printf("events 入库失败: %v", err)
 		}
 	})
@@ -517,13 +775,43 @@ func (s *State) Snapshot() FleetSnap {
 			CabinHumidityPct:  round2(v.cabinHumidity),
 			Gps:               GpsSnap{Fix: v.gpsFix, Lat: round6(v.gpsLat), Lon: round6(v.gpsLon), Alt: round2(v.gpsAlt)},
 			Capabilities:      copyMap(v.capabilities),
-			Pose:              poseFor(v.id),
+			Pose: Pose{
+				Valid: v.poseValid,
+				Frame: v.poseFrame,
+				X:     round2(v.poseX),
+				Y:     round2(v.poseY),
+				Yaw:   round2(v.poseYaw),
+			},
 		})
 	}
 	sort.Slice(out.Vehicles, func(i, j int) bool {
 		return out.Vehicles[i].VehicleID < out.Vehicles[j].VehicleID
 	})
 	return out
+}
+
+func (s *State) RuntimeStatus() RuntimeStatus {
+	status := RuntimeStatus{}
+	if s.db != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		status.DatabaseReady = s.db.PingContext(ctx) == nil
+		cancel()
+	}
+	if status.DatabaseReady {
+		ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		status.PersistentWritesReady = probePersistentWrite(ctx, s.db)
+		cancel()
+	}
+	if status.DatabaseReady {
+		status.Mode = "persistent"
+	} else {
+		status.Mode = "volatile-diagnostic"
+	}
+	s.mu.RLock()
+	client := s.mqttPub
+	s.mu.RUnlock()
+	status.MQTTReady = client != nil && client.IsConnected()
+	return status
 }
 
 // Vehicle 单车快照（/api/vehicles/:id）。
@@ -551,9 +839,7 @@ func (s *State) broadcastLoop() {
 	t := time.NewTicker(time.Second)
 	defer t.Stop()
 	for range t.C {
-		if b, err := json.Marshal(map[string]any{"type": "state", "data": s.Snapshot()}); err == nil {
-			s.hub.Broadcast(b)
-		}
+		s.hub.PublishState(s.Snapshot())
 	}
 }
 
@@ -567,7 +853,10 @@ func (s *State) dbLoop() {
 	}
 }
 
-// submitDB 非阻塞入队；满则丢弃并记日志（大屏真相在内存，入库缺失只影响历史）。
+// submitDB 优先非阻塞入队；队列满时在当前调用上下文执行一次有界同步回退。
+// 这样高峰期会产生可观测背压，但不会把数据库事实静默丢掉。调用方位于
+// MQTT 回调时可能短暂阻塞，这是持久性优先于吞吐的明确取舍；控制 ACK
+// 本身仍走更强的同步持久化路径。
 func (s *State) submitDB(job dbJob) {
 	if s.db == nil {
 		return
@@ -575,7 +864,13 @@ func (s *State) submitDB(job dbJob) {
 	select {
 	case s.dbCh <- job:
 	default:
-		log.Printf("DB 写入队列满，丢弃一次写入")
+		if s.metrics != nil {
+			s.metrics.dbWriteQueueFallbacks.Add(1)
+		}
+		log.Printf("DB 写入队列满，执行有界同步回退")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		job(ctx, s.db)
+		cancel()
 	}
 }
 
@@ -606,32 +901,25 @@ func (s *State) persistSample(id string, sigs []signalVal) {
 }
 
 // persistVehicleState 车辆最新状态 upsert（随遥测抽稀节奏）。
-func (s *State) persistVehicleState(id string, online bool, mode string, speed, soc, voltage float64, gear string, steer float64) {
+func (s *State) persistVehicleState(id string, online bool, mode string, speed, soc, voltage float64, gear string, steer float64,
+	gpsFix bool, gpsLat, gpsLon, gpsAlt float64, poseValid bool, poseFrame string, poseX, poseY, poseYaw float64) {
 	s.submitDB(func(ctx context.Context, db *sql.DB) {
 		if _, err := db.ExecContext(ctx,
-			"INSERT INTO vehicles(id) VALUES ($1) ON CONFLICT DO NOTHING", id); err != nil {
+			`INSERT INTO vehicles(id, lifecycle_state, last_seen)
+				VALUES ($1, CASE WHEN $2 THEN 'online' ELSE 'offline' END,
+					CASE WHEN $2 THEN now() ELSE NULL END)
+				ON CONFLICT (id) DO UPDATE SET
+				last_seen=CASE WHEN $2 THEN now() ELSE vehicles.last_seen END,
+				lifecycle_state=CASE
+					WHEN vehicles.lifecycle_state IN ('quarantined','retired','maintenance') THEN vehicles.lifecycle_state
+					WHEN $2 THEN 'online' ELSE 'offline' END`, id, online); err != nil {
 			log.Printf("vehicles 入库失败: %v", err)
 			return
 		}
 		if _, err := db.ExecContext(ctx,
-			"INSERT INTO vehicle_state(vehicle_id, online, mode, speed_mps, soc, voltage, gear, steer_rad, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now()) ON CONFLICT (vehicle_id) DO UPDATE SET online=$2, mode=$3, speed_mps=$4, soc=$5, voltage=$6, gear=$7, steer_rad=$8, updated_at=now()",
-			id, online, nullable(mode), speed, soc, voltage, nullable(gear), steer); err != nil {
+			"INSERT INTO vehicle_state(vehicle_id, online, mode, speed_mps, soc, voltage, gear, steer_rad, gps_fix, gps_lat, gps_lon, gps_alt, pose_valid, pose_frame, pose_x, pose_y, pose_yaw, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now()) ON CONFLICT (vehicle_id) DO UPDATE SET online=$2, mode=$3, speed_mps=$4, soc=$5, voltage=$6, gear=$7, steer_rad=$8, gps_fix=$9, gps_lat=$10, gps_lon=$11, gps_alt=$12, pose_valid=$13, pose_frame=$14, pose_x=$15, pose_y=$16, pose_yaw=$17, updated_at=now()",
+			id, online, nullable(mode), speed, soc, voltage, nullable(gear), steer, gpsFix, gpsLat, gpsLon, gpsAlt, poseValid, nullable(poseFrame), poseX, poseY, poseYaw); err != nil {
 			log.Printf("vehicle_state 入库失败: %v", err)
-		}
-	})
-}
-
-// persistLease 接管租约入库（按 lease_id 幂等）。
-func (s *State) persistLease(tk TakeoverSnap) {
-	if tk.LeaseID == "" {
-		return
-	}
-	until := time.Now().Add(time.Duration(tk.SecondsLeft * float64(time.Second)))
-	s.submitDB(func(ctx context.Context, db *sql.DB) {
-		if _, err := db.ExecContext(ctx,
-			"INSERT INTO leases(id, driver, fencing, valid_until, state) VALUES ($1,$2,$3,$4,'active') ON CONFLICT (id) DO UPDATE SET driver=$2, fencing=$3, valid_until=$4, state='active'",
-			tk.LeaseID, tk.Driver, tk.Fencing, until); err != nil {
-			log.Printf("leases 入库失败: %v", err)
 		}
 	})
 }
@@ -678,27 +966,88 @@ func (s *State) SetMQTTPub(c mqtt.Client) {
 	s.mu.Lock()
 	s.mqttPub = c
 	s.mu.Unlock()
+	select {
+	case s.outboxWake <- struct{}{}:
+	default:
+	}
 }
 
-// PublishJSON 发布信封到 vehicle/{id}/{kind}；返回是否真的发出去了。
-// 未连上 broker 时返回 false（调用方据此把任务留在队列）。
-func (s *State) PublishJSON(vehicleID, kind string, payload []byte) bool {
-	s.mu.RLock()
-	c := s.mqttPub
-	s.mu.RUnlock()
-	if c == nil || !c.IsConnected() {
-		return false
-	}
-	env := map[string]any{
-		"message_type": "platform.v1.VehicleCommand",
-		"vehicle_id":   vehicleID,
-		"utc_time_ns":  time.Now().UnixNano(),
-		"payload":      json.RawMessage(payload),
-	}
-	b, err := json.Marshal(env)
+// PublishNavigation publishes a signed protobuf NavigationCommand to the
+// vehicle's registered Gateway. JSON business commands are deliberately not
+// supported: an unavailable key, Gateway or broker makes the operation fail
+// closed and the caller keeps the task pending.
+func (s *State) PublishNavigation(cmd *platformv1.NavigationCommand) bool {
+	gatewayID, b, err := s.navigationEnvelope(cmd)
 	if err != nil {
 		return false
 	}
-	t := c.Publish(fmt.Sprintf("vehicle/%s/%s", vehicleID, kind), 1, false, b)
-	return t.Wait() && t.Error() == nil
+	return s.enqueueOutboxFor(gatewayID, "navigation", "navigation_route", cmd.GetRouteId(), b)
+}
+
+// publishNavigationTx builds and queues a navigation envelope inside the same
+// PostgreSQL transaction as the route row. This closes the crash window
+// between "route committed" and "downlink queued".
+func (s *State) publishNavigationTx(ctx context.Context, tx *sql.Tx, cmd *platformv1.NavigationCommand) error {
+	gatewayID, b, err := s.navigationEnvelope(cmd)
+	if err != nil {
+		return err
+	}
+	return s.enqueueOutboxTx(ctx, tx, gatewayID, "navigation", "navigation_route", cmd.GetRouteId(), b)
+}
+
+func (s *State) navigationEnvelope(cmd *platformv1.NavigationCommand) (string, []byte, error) {
+	if s == nil || cmd == nil || cmd.GetVehicleId() == "" || cmd.GetRouteId() == "" || len(s.envelopeAuthKey) < 32 || s.outboundSessionID == "" {
+		return "", nil, fmt.Errorf("导航 Envelope 字段或认证密钥无效")
+	}
+	s.mu.Lock()
+	if s.outboundSeq == nil {
+		s.outboundSeq = make(map[string]uint64)
+	}
+	v := s.vehicles[cmd.GetVehicleId()]
+	if v == nil || v.gatewayID == "" {
+		s.mu.Unlock()
+		return "", nil, fmt.Errorf("车辆没有已绑定 Gateway")
+	}
+	s.outboundSeq[cmd.GetVehicleId()]++
+	sequence := s.outboundSeq[cmd.GetVehicleId()]
+	gatewayID := v.gatewayID
+	s.mu.Unlock()
+	payload, err := (proto.MarshalOptions{Deterministic: true}).Marshal(cmd)
+	if err != nil {
+		return "", nil, err
+	}
+	now := time.Now().UTC()
+	env := &platformv1.Envelope{
+		SchemaMajor: 1, SchemaMinor: 0,
+		MessageType: "platform.v1.NavigationCommand",
+		VehicleId:   cmd.GetVehicleId(), GatewayId: gatewayID,
+		SessionId: s.outboundSessionID, Sequence: sequence,
+		UtcTimeNs: now.UnixNano(), MonotonicTimeNs: platformv1.MonotonicNowNS(),
+		TtlMs: 30000, TraceId: cmd.GetTraceId(), Payload: payload,
+	}
+	if env.TraceId == "" {
+		env.TraceId = cmd.GetRouteId()
+	}
+	if env.TraceId == "" || platformv1.SignEnvelope(env, s.envelopeAuthKey) != nil {
+		return "", nil, fmt.Errorf("导航 Envelope 签名失败")
+	}
+	b, err := (proto.MarshalOptions{Deterministic: true}).Marshal(env)
+	if err != nil {
+		return "", nil, err
+	}
+	return gatewayID, b, nil
+}
+
+// PublishGatewayEnvelope 把已经过 Authority 签名的控制面消息投递至某一
+// 受绑定 Gateway。Broker ACL 还会把该 topic 限制为 Gateway 证书身份可读。
+func (s *State) PublishGatewayEnvelope(gatewayID, channel string, env []byte) bool {
+	if gatewayID == "" || channel == "" || len(env) == 0 {
+		return false
+	}
+	// 所有生产下行先进入 PostgreSQL outbox。这样 Fleet/MQTT 短暂重启不会
+	// 丢失已签名消息，也不会把“进程尝试发送”冒充成“车辆已执行”。
+	if s.db == nil {
+		return false
+	}
+	return s.enqueueOutbox(gatewayID, channel, env)
 }

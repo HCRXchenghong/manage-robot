@@ -3,6 +3,8 @@ import type { FleetState } from "../api";
 import {
   emergencyStop,
   fetchDevices,
+  openTab,
+  driveViewURL,
   takeoverActiveList,
   takeoverMine,
   takeoverReleaseMine,
@@ -10,6 +12,7 @@ import {
 } from "../api";
 import type { ActiveTakeover, DeviceInfo, VehicleSnap } from "../types";
 import CollapsePanel from "../components/CollapsePanel";
+import EstopButton from "../components/EstopControl";
 import Modal from "../components/Modal";
 import VideoPanel from "../components/VideoPanel";
 import VehicleTable, { vehicleStatusOf } from "../components/VehicleTable";
@@ -76,7 +79,7 @@ export default function VehicleDetail({ fleet, vehicle, onSelect, compact, onExp
           <div className="kv"><span>在线</span><b>{v.online ? "是" : "否（心跳龄 " + v.last_heartbeat_age_s.toFixed(1) + "s）"}</b></div>
           <div className="kv"><span>模式</span><b>{MODE_LABEL[v.mode] || v.mode || "-"}</b></div>
           <div className="kv"><span>转向</span><b className="mono">{v.steer_rad.toFixed(3)} rad</b></div>
-          <div className="kv"><span>位姿</span><b className="mono">x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</b></div>
+          <div className="kv"><span>位姿</span><b className="mono">{v.pose.valid ? "x=" + v.pose.x.toFixed(1) + " y=" + v.pose.y.toFixed(1) + " yaw=" + v.pose.yaw.toFixed(2) : "未收到真实定位"}</b></div>
         </div>
         {compact && (
           <div className="btn-row mt compact-actions">
@@ -103,32 +106,14 @@ function GearBig({ gear }: { gear: string }) {
 }
 
 // 急停 + 远程接管按钮组（弹窗仪表盘与总览紧凑卡片共用）：
-// 急停两步确认防误触；远程接管弹账号级接管快捷弹窗。
+// 急停走大弹窗确认并锁定（解除前一直急停）；远程接管弹大确认弹窗。
 function EstopTakeoverButtons({ vehicleId, small }: { vehicleId: string; small?: boolean }) {
-  const [armEstop, setArmEstop] = useState(false);
-  const [msg, setMsg] = useState("");
   const [tkOpen, setTkOpen] = useState(false);
-
-  const onEstop = () => {
-    if (!armEstop) {
-      setArmEstop(true);
-      window.setTimeout(() => setArmEstop(false), 3000);
-      return;
-    }
-    setArmEstop(false);
-    emergencyStop()
-      .then((r) => setMsg("紧急停车 " + (r.ok ? "已下发并被接受" : "失败：" + String(r.error || r.ack || ""))))
-      .catch((e) => setMsg("紧急停车失败：" + String(e)));
-  };
-
   const sz = small ? " small" : "";
   return (
     <>
-      <button className={"btn danger" + sz + (armEstop ? " estop-arm" : "")} onClick={onEstop}>
-        {armEstop ? "再次点击确认急停！" : "急停"}
-      </button>
+      <EstopButton vehicleId={vehicleId} small={small} />
       <button className={"btn primary" + sz} onClick={() => setTkOpen(true)}>远程接管</button>
-      {msg && <span className="muted" style={{ fontSize: 11 }}>{msg}</span>}
       {tkOpen && <TakeoverQuickModal vehicleId={vehicleId} onClose={() => setTkOpen(false)} />}
     </>
   );
@@ -136,7 +121,7 @@ function EstopTakeoverButtons({ vehicleId, small }: { vehicleId: string; small?:
 
 // 远程接管快捷弹窗：接账号级接管新架构（绑定设备 → takeoverTake），
 // 已绑定设备可一键接管本车并跳驾驶页；未绑定则引导去「远程接管」页绑定。
-function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose: () => void }) {
+export function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose: () => void }) {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [mine, setMine] = useState<ActiveTakeover | null>(null);
   const [active, setActive] = useState<ActiveTakeover[]>([]);
@@ -166,7 +151,8 @@ function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose
     setBusy(false);
     if (r && r.ok) {
       onClose();
-      window.location.hash = "#/drive";
+      // 接管成功 → 新标签页打开该车驾驶页（被弹窗拦截则退回同标签跳转）
+      openTab(driveViewURL(vehicleId));
       return;
     }
     setMsg(String(r?.error || "接管失败，请重试"));
@@ -181,42 +167,46 @@ function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose
   };
 
   return (
-    <Modal title={"远程接管 · " + vehicleId} onClose={onClose} width="min(520px, 92vw)">
-      <div className="kv-list">
-        <div className="kv">
-          <span>接管占用</span>
-          <b>{byMe ? "你已接管" : occ ? (occ.driver || "他人") + " 接管中" : "空闲"}</b>
-        </div>
-        <div className="kv">
-          <span>控制设备</span>
-          <b>{device ? device.name + "（" + device.type + "）" : "未绑定"}</b>
-        </div>
-        {mine && (
-          <div className="kv">
-            <span>你的租约</span>
-            <b className="mono">{mine.vehicle_id} · {mine.lease_id}</b>
+    <Modal title={"远程接管确认 · " + vehicleId} onClose={onClose} width="min(860px, 94vw)">
+      <div className="tkq-body">
+        <div className="tkq-grid">
+          <div className="tkq-cell">
+            <span className="tkq-l">目标车辆</span>
+            <b className="tkq-v mono">{vehicleId}</b>
           </div>
-        )}
-      </div>
-      <div className="btn-row mt">
+          <div className="tkq-cell">
+            <span className="tkq-l">接管占用</span>
+            <b className="tkq-v">{byMe ? "你已接管" : occ ? (occ.driver || "他人") + " 接管中" : "空闲"}</b>
+          </div>
+          <div className="tkq-cell">
+            <span className="tkq-l">控制设备</span>
+            <b className="tkq-v">{device ? device.name + "（" + device.type + "）" : "未绑定"}</b>
+          </div>
+          <div className="tkq-cell">
+            <span className="tkq-l">你的租约</span>
+            <b className="tkq-v mono">{mine ? mine.vehicle_id + " · " + mine.lease_id : "—"}</b>
+          </div>
+        </div>
+      <div className="btn-row mt" style={{ justifyContent: "center", gap: 14 }}>
         {byMe ? (
           <>
             <button
-              className="btn small primary"
+              className="btn primary"
               onClick={() => {
                 onClose();
-                window.location.hash = "#/drive";
+                // 已接管 → 新标签页打开该车驾驶页
+                openTab(driveViewURL(vehicleId));
               }}
             >
               继续驾驶
             </button>
-            <button className="btn small danger" disabled={busy} onClick={() => void doRelease()}>
+            <button className="btn danger" disabled={busy} onClick={() => void doRelease()}>
               交还控制权
             </button>
           </>
         ) : device ? (
           <button
-            className="btn small primary"
+            className="btn primary"
             disabled={busy || !!occ || (mine != null && mine.vehicle_id !== vehicleId)}
             onClick={() => void doTake()}
           >
@@ -224,7 +214,7 @@ function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose
           </button>
         ) : (
           <button
-            className="btn small primary"
+            className="btn primary"
             onClick={() => {
               onClose();
               window.location.hash = "#/drive";
@@ -233,10 +223,12 @@ function TakeoverQuickModal({ vehicleId, onClose }: { vehicleId: string; onClose
             去绑定控制设备
           </button>
         )}
+        <button className="btn" onClick={onClose}>取消</button>
       </div>
       {msg && <div className="msg err">{msg}</div>}
-      <div className="muted mt" style={{ fontSize: 11 }}>
+      <div className="muted mt" style={{ fontSize: 11, textAlign: "center" }}>
         一个账号一次只能接管一辆车；离线或已被他人接管的车辆不可选。
+      </div>
       </div>
     </Modal>
   );
@@ -249,7 +241,7 @@ export function VehicleDashboard({ v }: { v: VehicleSnap }) {
       <div className="dash-chips">
         <span className={"chip " + (v.online ? "ok" : "err")}>{v.online ? "在线" : "离线"}</span>
         <span className="chip">{MODE_LABEL[v.mode] || v.mode || "-"}</span>
-        <span className="chip mono">位姿 x={v.pose.x.toFixed(1)} y={v.pose.y.toFixed(1)} yaw={v.pose.yaw.toFixed(2)}</span>
+        <span className="chip mono">{v.pose.valid ? "位姿 x=" + v.pose.x.toFixed(1) + " y=" + v.pose.y.toFixed(1) + " yaw=" + v.pose.yaw.toFixed(2) : "位姿：未收到真实定位"}</span>
         <span className="dash-actions">
           <EstopTakeoverButtons vehicleId={v.vehicle_id} small />
         </span>

@@ -4,3 +4,9 @@
 version: v2
 modules:
   - path: protobuf
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

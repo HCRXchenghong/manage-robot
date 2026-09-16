@@ -1,6 +1,6 @@
-// 数字孪生中心模型：优先加载车辆自定义 GLB（/api/vehicles/{id}/model），404 回退平台默认模型。
+// 数字孪生中心模型：只加载该车辆已注册的真实 GLB；缺失或损坏时明确显示不可用。
 // 借鉴桌面「数字孪生」项目的 Robot3D：自动居中缩放 + 轨道控制 + 四角取景框。
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Component, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls, useGLTF } from "@react-three/drei";
 import * as THREE from "three";
@@ -52,19 +52,42 @@ function Model({ url, powered }: { url: string; powered: boolean }) {
   );
 }
 
-export default function TwinModel({ vehicleId, powered }: { vehicleId: string; powered: boolean }) {
+class ModelErrorBoundary extends Component<{ children: ReactNode; onError: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch() {
+    this.props.onError();
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+export default function TwinModel({ vehicleId, powered, compact = false }: { vehicleId: string; powered: boolean; compact?: boolean }) {
   const [url, setUrl] = useState<string | null>(null);
+  const [status, setStatus] = useState<"loading" | "ready" | "unavailable">("loading");
   useEffect(() => {
     let alive = true;
     setUrl(null);
+    setStatus("loading");
     const custom = "/api/vehicles/" + encodeURIComponent(vehicleId) + "/model";
     fetch(custom)
       .then((r) => {
         if (!alive) return;
-        setUrl(r.ok ? custom : "/models/default.glb");
+        if (!r.ok) {
+          setStatus("unavailable");
+          return;
+        }
+        setUrl(custom);
+        setStatus("ready");
       })
       .catch(() => {
-        if (alive) setUrl("/models/default.glb");
+        if (alive) setStatus("unavailable");
       });
     return () => {
       alive = false;
@@ -74,19 +97,21 @@ export default function TwinModel({ vehicleId, powered }: { vehicleId: string; p
   return (
     <div className="twin-model">
       <Canvas
-        camera={{ position: [5, 1.5, 5], fov: 40 }}
+        camera={{ position: compact ? [4.1, 1.4, 4.1] : [5, 1.5, 5], fov: 40 }}
         dpr={[1, 2]}
         gl={{ antialias: true, alpha: true }}
       >
         <ambientLight intensity={powered ? 0.6 : 0.25} />
         <directionalLight position={[10, 10, 5]} intensity={powered ? 1 : 0.4} />
         <pointLight position={[-10, -10, -5]} intensity={0.4} color="#00ffff" />
-        {url && (
+        {url && status === "ready" && (
           <Suspense fallback={null}>
-            <Model url={url} powered={powered} />
+            <ModelErrorBoundary key={url} onError={() => setStatus("unavailable")}>
+              <Model url={url} powered={powered} />
+            </ModelErrorBoundary>
           </Suspense>
         )}
-        <OrbitControls enablePan target={[0, -0.6, 0]} minDistance={1.5} maxDistance={12} />
+        <OrbitControls enablePan target={[0, compact ? -1.2 : -0.6, 0]} minDistance={1.5} maxDistance={12} />
       </Canvas>
       <div className="model-overlay">
         <div className="overlay-corner top-left"></div>
@@ -94,9 +119,9 @@ export default function TwinModel({ vehicleId, powered }: { vehicleId: string; p
         <div className="overlay-corner bottom-left"></div>
         <div className="overlay-corner bottom-right"></div>
       </div>
-      {!url && (
+      {status !== "ready" && (
         <div className="muted" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center" }}>
-          模型加载中…
+          {status === "loading" ? "正在加载车辆真实模型…" : "该车辆尚未注册可用的真实模型"}
         </div>
       )}
     </div>

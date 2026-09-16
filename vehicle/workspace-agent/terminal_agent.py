@@ -17,16 +17,32 @@
 #       [--listen 9600] [--uds /tmp/ra-gw.sock]
 
 import argparse
+import base64
 import fcntl
 import json
 import os
 import pty
 import socket
+import ssl
 import struct
 import subprocess
 import termios
 import threading
 import time
+import sys
+from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.exceptions import InvalidSignature
+from google.protobuf.message import DecodeError
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "protocols" / "gen" / "python"))
+from robot_agent_platform.v1 import auth as proto_auth  # noqa: E402
+from robot_agent_platform.v1 import envelope_pb2, local_pb2, workspace_pb2  # noqa: E402
+
+LOCAL_PROTOCOL = "platform.v1.local"
+MAX_MSG_BYTES = 1024 * 1024
 
 SCROLLBACK_MAX = 65536            # 回放缓冲（字节）
 AUDIT_PATH = "/tmp/ra-workspace-audit.log"
@@ -35,6 +51,40 @@ DENY_PATTERNS = [
     b"rm -rf /", b"rm -rf ~", b"reboot", b"shutdown",
     b"mkfs", b"dd if=/dev/zero of=/dev/", b"> /dev/sda",
 ]
+
+
+def encode_local_frame(frame):
+    if not isinstance(frame, local_pb2.LocalFrame) or frame.protocol != LOCAL_PROTOCOL:
+        raise ValueError("本机工作空间帧协议无效")
+    raw = frame.SerializeToString(deterministic=True)
+    if not 0 < len(raw) <= MAX_MSG_BYTES:
+        raise ValueError("本机工作空间帧大小无效")
+    return struct.pack(">I", len(raw)) + raw
+
+
+def recv_local_frame(conn):
+    header = recv_exact(conn, 4)
+    if not header:
+        raise EOFError
+    size = struct.unpack(">I", header)[0]
+    if size == 0 or size > MAX_MSG_BYTES:
+        raise ValueError("本机工作空间帧超限")
+    raw = recv_exact(conn, size)
+    try:
+        frame = local_pb2.LocalFrame.FromString(raw)
+    except DecodeError as exc:
+        raise ValueError("本机工作空间帧无法解析") from exc
+    return frame
+
+
+def recv_exact(conn, size):
+    out = bytearray()
+    while len(out) < size:
+        part = conn.recv(size - len(out))
+        if not part:
+            return b""
+        out.extend(part)
+    return bytes(out)
 
 
 def audit(event, **kw):
@@ -100,11 +150,17 @@ class ShellSession:
 
 
 class WorkspaceAgent:
-    def __init__(self, listen_port, uds_path):
+    def __init__(self, listen_port, uds_path, vehicle_id, gateway_id, tls_context,
+                 envelope_auth_key, authority_keys):
         self.listen_port = listen_port
         self.uds_path = uds_path
-        self.tokens = {}                 # token -> valid_until_unix_ns
+        self.vehicle_id = vehicle_id
+        self.gateway_id = gateway_id
+        self.tls_context = tls_context
+        self.tokens = {}                 # token -> (valid_until_unix_ns, session_id)
         self.tokens_lock = threading.Lock()
+        self.envelope_auth_key = envelope_auth_key
+        self.authority_keys = authority_keys
         self.session = ShellSession(self)
         self.client = None               # 当前远端客户端套接字（独占）
         self.client_lock = threading.Lock()
@@ -130,38 +186,62 @@ class WorkspaceAgent:
             except OSError:
                 conn.close()
                 time.sleep(0.3)
+        conn.sendall(encode_local_frame(local_pb2.LocalFrame(
+            kind=local_pb2.LocalFrame.KIND_HELLO,
+            component="workspace", protocol=LOCAL_PROTOCOL)))
         print(f"[terminal] 已接入 Gateway UDS：{self.uds_path}", flush=True)
-        buf = b""
         while True:
             try:
-                data = conn.recv(65535)
-            except OSError:
+                frame = recv_local_frame(conn)
+            except (OSError, EOFError, ValueError):
                 break
-            if not data:
-                break
-            buf += data
-            while b"\n" in buf:
-                line, buf = buf.split(b"\n", 1)
-                try:
-                    rec = json.loads(line.decode("utf-8"))
-                except (ValueError, UnicodeDecodeError):
-                    continue
-                if rec.get("kind") != "terminal":
-                    continue
-                p = rec.get("env", {}).get("payload", {})
-                tok = p.get("terminal_token", "")
-                until = int(p.get("valid_until_unix_ns", 0))
-                if tok:
-                    with self.tokens_lock:
-                        self.tokens[tok] = until
-                    print(f"[terminal] 收到令牌 driver={p.get('driver_id')} "
-                          f"有效期 {(until - time.time_ns()) / 1e9:.0f}s",
-                          flush=True)
+            if (frame.GetProtocol() != LOCAL_PROTOCOL or
+                    frame.GetKind() != local_pb2.LocalFrame.KIND_ENVELOPE or
+                    not frame.HasField("envelope")):
+                audit("denied", reason="工作空间通道收到非 Envelope 帧")
+                continue
+            env = frame.envelope
+            try:
+                proto_auth.validate_envelope(
+                    env, "platform.v1.TerminalGrant", self.vehicle_id, self.gateway_id
+                )
+                if not proto_auth.verify_envelope_auth(env, self.envelope_auth_key):
+                    raise ValueError("Envelope.auth_tag 无效")
+                grant = workspace_pb2.TerminalGrant.FromString(env.payload)
+                self._accept_grant(env, grant)
+            except (TypeError, ValueError, DecodeError, InvalidSignature) as exc:
+                audit("denied", reason="TerminalGrant 校验失败", detail=str(exc))
 
-    def token_ok(self, tok):
+    def _accept_grant(self, env, grant):
+        if (grant.version != 1 or grant.vehicle_id != self.vehicle_id or
+                grant.gateway_id != self.gateway_id or not grant.session_id or
+                len(grant.terminal_token) < 32 or not grant.driver_id or
+                not grant.device_id or grant.issued_at_unix_ns <= 0 or
+                grant.valid_until_unix_ns <= time.time_ns() or
+                grant.valid_until_unix_ns <= grant.issued_at_unix_ns or
+                env.session_id != grant.session_id):
+            raise ValueError("TerminalGrant 字段不符合安全契约")
+        key = self.authority_keys.get(grant.authority_key_id)
+        if key is None or len(grant.authority_signature) != 64:
+            raise ValueError("TerminalGrant Authority 签名不受信任")
+        unsigned = workspace_pb2.TerminalGrant()
+        unsigned.CopyFrom(grant)
+        unsigned.ClearField("authority_signature")
+        Ed25519PublicKey.from_public_bytes(key).verify(
+            grant.authority_signature, unsigned.SerializeToString(deterministic=True)
+        )
+        token = base64.urlsafe_b64encode(grant.terminal_token).decode("ascii")
         with self.tokens_lock:
-            until = self.tokens.get(tok)
-        return until is not None and until > time.time_ns()
+            self.tokens[token] = (grant.valid_until_unix_ns, grant.session_id)
+        print(f"[terminal] 收到令牌 driver={grant.driver_id} "
+              f"有效期 {(grant.valid_until_unix_ns - time.time_ns()) / 1e9:.0f}s",
+              flush=True)
+
+    def token_ok(self, tok, session_id):
+        with self.tokens_lock:
+            grant = self.tokens.get(tok)
+        return (grant is not None and grant[1] == session_id and
+                grant[0] > time.time_ns())
 
     # ---------- 输入安全：黑名单拦截 ----------
     def check_input(self, data):
@@ -186,7 +266,14 @@ class WorkspaceAgent:
         print(f"[terminal] 监听 127.0.0.1:{self.listen_port}"
               f"（需令牌才可附着）", flush=True)
         while True:
-            conn, addr = srv.accept()
+            raw_conn, addr = srv.accept()
+            try:
+                conn = self.tls_context.wrap_socket(raw_conn, server_side=True)
+            except ssl.SSLError as exc:
+                audit("denied", src=str(addr), reason="客户端 mTLS 握手失败")
+                print(f"[terminal] mTLS 握手失败：{type(exc).__name__}", flush=True)
+                raw_conn.close()
+                continue
             threading.Thread(target=self.handle_client, args=(conn, addr),
                              daemon=True).start()
 
@@ -209,7 +296,8 @@ class WorkspaceAgent:
         except (ValueError, UnicodeDecodeError):
             req = {}
         tok = req.get("token", "")
-        if not self.token_ok(tok):
+        session_id = req.get("session_id", "")
+        if not self.token_ok(tok, session_id):
             audit("denied", src=str(addr), reason="令牌无效或已过期")
             conn.sendall((json.dumps(
                 {"ok": False, "reason": "终端令牌无效或已过期"}) + "\n").encode())
@@ -263,12 +351,62 @@ class WorkspaceAgent:
             print("[terminal] 客户端断开，会话保活等待重连", flush=True)
 
 
+def load_hmac_key(path):
+    info = os.stat(path)
+    if info.st_mode & 0o077:
+        raise ValueError("Envelope HMAC 密钥文件权限必须为 0600")
+    with open(path, "rb") as f:
+        raw = base64.b64decode(f.read().strip(), validate=True)
+    if len(raw) < 32:
+        raise ValueError("Envelope HMAC 密钥至少需要 256 位")
+    return raw
+
+
+def load_authority_key(spec):
+    if "=" not in spec:
+        raise ValueError("authority-public-key 格式应为 key_id=/secure/path/key.b64")
+    key_id, path = spec.split("=", 1)
+    if not key_id or not path:
+        raise ValueError("authority-public-key 格式无效")
+    info = os.stat(path)
+    if info.st_mode & 0o077:
+        raise ValueError("Authority 公钥文件权限必须为 0600 或 0640")
+    with open(path, "rb") as f:
+        raw = base64.b64decode(f.read().strip(), validate=True)
+    if len(raw) != 32:
+        raise ValueError("Authority 公钥必须为 256 位 Ed25519 公钥")
+    return key_id, raw
+
+
 def main():
     ap = argparse.ArgumentParser(description="车端远程终端代理")
-    ap.add_argument("--listen", type=int, default=9600)
-    ap.add_argument("--uds", default="/tmp/ra-gw.sock")
+    ap.add_argument("--listen", type=int, required=True)
+    ap.add_argument("--uds", required=True)
+    ap.add_argument("--vehicle-id", required=True)
+    ap.add_argument("--gateway-id", required=True)
+    ap.add_argument("--cert", required=True, help="终端服务端证书")
+    ap.add_argument("--key", required=True, help="终端服务端私钥")
+    ap.add_argument("--client-ca", required=True, help="受信工作空间客户端 CA")
+    ap.add_argument("--envelope-auth-key", required=True,
+                    help="Envelope HMAC-SHA256 密钥文件（0600、base64）")
+    ap.add_argument("--authority-public-key", action="append", required=True,
+                    help="可重复：key_id=/secure/path/authority-public-key.b64")
     args = ap.parse_args()
-    agent = WorkspaceAgent(args.listen, args.uds)
+    ca = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ca.minimum_version = ssl.TLSVersion.TLSv1_3
+    ca.verify_mode = ssl.CERT_REQUIRED
+    ca.load_cert_chain(args.cert, args.key)
+    ca.load_verify_locations(args.client_ca)
+    try:
+        envelope_auth_key = load_hmac_key(args.envelope_auth_key)
+        authority_keys = {}
+        for spec in args.authority_public_key:
+            key_id, key = load_authority_key(spec)
+            authority_keys[key_id] = key
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"工作空间安全材料不可用：{exc}")
+    agent = WorkspaceAgent(args.listen, args.uds, args.vehicle_id, args.gateway_id, ca,
+                           envelope_auth_key, authority_keys)
     threading.Thread(target=agent.uds_loop, daemon=True).start()
     agent.serve()
 

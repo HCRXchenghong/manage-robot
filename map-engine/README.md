@@ -5,4 +5,4 @@
 - 分块、版本化、原子发布到车
 - 标注层（OpenLABEL）
 
-详见 介绍.md §7.10。
+详见 [`../docs/architecture-functional-specification.md`](../docs/architecture-functional-specification.md) 的地图与点云章节。

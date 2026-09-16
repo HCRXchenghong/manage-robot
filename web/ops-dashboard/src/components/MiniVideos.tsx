@@ -1,33 +1,41 @@
 import CollapsePanel from "./CollapsePanel";
-import { SimCamCanvas } from "./VideoPanel";
+import { VideoUnavailable } from "./VideoPanel";
 import type { VehicleSnap } from "../types";
 
-// 紧凑视频监控：默认前向 + 俯视两路并排；single 时只显示前向单画面（孪生页用）。
-// 模拟画面，阶段 2 换 WebRTC。
+// 紧凑视频监控：只有车端媒体代理注册真实流后才能显示画面。
 interface Props {
   vehicle: VehicleSnap | null;
   onExpand?: () => void;
   single?: boolean;
+  height?: number;
+  fill?: boolean;
 }
 
-export default function MiniVideos({ vehicle, onExpand, single }: Props) {
-  const vid = vehicle ? vehicle.vehicle_id : "sim-veh-001";
+export default function MiniVideos({ vehicle, onExpand, single, height = 140, fill = false }: Props) {
+  const vid = vehicle?.vehicle_id || "未选择车辆";
   return (
     <CollapsePanel
       id="ov-videos"
       fixed
       title={"视频监控 · " + vid}
-      hint={single ? "单画面 · 弹窗可换机位" : "前向 / 俯视"}
+      hint={single ? "等待真实媒体流" : "等待真实媒体流"}
       onTitleClick={onExpand}
     >
-      <div className="mini-videos" onClick={onExpand}>
-        <div className="mini-video">
-          <SimCamCanvas camera="front" height={140} />
+      <div
+        className="mini-videos"
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onExpand?.();
+        }}
+        title="双击弹窗放大"
+      >
+        <div className="mini-video" style={fill ? { display: "flex" } : undefined}>
+          <VideoUnavailable vehicleID={vehicle?.vehicle_id} camera="front" height={height} fill={fill} />
           <span className="video-meta">前向机位</span>
         </div>
         {!single && (
           <div className="mini-video">
-            <SimCamCanvas camera="top" height={140} />
+            <VideoUnavailable vehicleID={vehicle?.vehicle_id} camera="top" height={height} />
             <span className="video-meta">俯视机位</span>
           </div>
         )}

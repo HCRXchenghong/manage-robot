@@ -1,7 +1,8 @@
 # Robot-agent
 
 多自动驾驶系统远程调度与远程驾驶平台（车云平台代码仓库）。
-架构设计文档见工作区根目录的 介绍.md（《技术架构与实施基线》v0.2）。
+架构与功能边界见 [`docs/architecture-functional-specification.md`](docs/architecture-functional-specification.md)；
+实施状态、验证记录和已知限制见 [`CURRENT_STATUS.md`](CURRENT_STATUS.md)。
 
 ## 这个仓库是做什么的
 
@@ -22,7 +23,7 @@
 |---|---|---|
 | vehicle/ | 车上的程序：Gateway、适配器、安全仲裁器、视频/终端/地图代理 | Go、C++ |
 | server/ | 云端服务：API、接入、接管控制、车队、地图 | Go |
-| client/ | 远驾客户端核心逻辑与模拟器 | Go |
+| client/ | 远驾客户端核心逻辑 | Go |
 | web/ | 浏览器页面：运营、远驾、终端、地图编辑器 | React + TS |
 | protocols/ | 所有端共用的“语言”：Protobuf、VSS、OpenAPI | Protobuf/Buf |
 | media/ | 视频接入、双路合并、分发（SFU） | Go、GStreamer、LiveKit |
@@ -32,24 +33,11 @@
 | tests/ | 协议、弱网、仿真、HIL、安全测试 | 多种 |
 | docs/ | 项目文档 | Markdown |
 
-## 当前进度（对照架构文档第 18 节）
+## 设计与实施说明
 
-- [x] 第 1 步：仓库目录脚手架（本目录）
-- [x] 第 2 步：protocols/ —— 第一版 Protobuf 消息与 VSS overlay（草案 v0.1，待评审冻结）
-- [x] 第 3 步：模拟器（假车 + 控制客户端 + 弱网注入，Python 首版，7 场景验证通过）
-- [x] 第 4 步：最小 Adapter —— ros1 翻译核心 + 车端 rospy 壳（11 项自检通过）；其余栈随 Gateway 后补
-- [x] 第 5a 步：Vehicle Gateway 骨架（UDS 本地通道 + 心跳 + 控制路由 + 端到端串联）
-- [x] 第 5b 步：mTLS 注册 + MQTT 遥测（开发 CA + mosquitto + paho，端到端验证）
-- [x] 第 5c 步：双 QUIC 控制（控制中继 control-relay + 双链路客户端；三场景验证：双发去重 / 断链存活 / 恢复）
-- [x] 第 5d 步：单路 WebRTC 视频回传（aiortc + 合成摄像头；端到端验证：收 70 帧/5s，640x360，约 14 fps）
-- [x] 第 6 步：断链最小风险（仲裁器看门狗：断流 800ms 自主减速停车 + 重新接管；对应架构文档第 18 节第 6 项）
-- [x] 第 7 步：双路视频冗余 + 合并（车端双发 + 收端按序号去重合并；单路中断时画面无缝续播、不重建会话）
-- [x] 第 8 步：控制权服务（接管审批 + 租约 + fencing；无授权动不了车、顶替/到期自动收回、租约断则车自停）
-- [x] 第 9 步：远程终端 workspace（令牌门禁 + 持久 PTY 会话 + 危险命令拦截 + 全审计 + 断线重连回放；验收 6/6）
-- [x] 第 10 步：运营大屏（React 前端 + Go fleet-hub + PostgreSQL + nginx/WAF 一期；激光雷达 2D/3D 点云地图、多车同屏；支持加载真实激光雷达扫描：PCD→CSV 转换 + 自动取景）
-- [x] map-engine 阶段 1：自动 3D→2D（BEV 占据网格 + 导出 ROS map_server 三件套）；总体计划见 docs/plan-map-engine.md
- - [x] 多栈点云导入工具 deploy/demo/map_import.py（ROS1/ROS2 bag、PCD、CSV、Livox CustomMsg、LaserScan；老旧 bag 线性扫描恢复）
- - [x] 远程接管驾驶舱 v1：视频墙 1/2/4（含 BEV/360°）+ 点云 + 天地图底图 + 底盘轮速/转向/电量/车型 + 车辆切换
+功能架构、边界、协议和验收要求见 `docs/architecture-functional-specification.md`；
+唯一进度记录见 `docs/implementation-progress.md`。本 README 只说明仓库职责，
+不复制阶段状态，避免把未接入的能力误认为生产能力。
 
 ## 基本原则（摘自架构文档）
 

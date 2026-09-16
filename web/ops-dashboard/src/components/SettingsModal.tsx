@@ -33,8 +33,8 @@ const FIELDS: FieldDef[] = [
   { cat: "map", key: "bev_cell", label: "3D→2D 默认格宽（米）", desc: "map_convert 一行命令的默认栅格分辨率", kind: "number" },
   { cat: "map", key: "maps_dir", label: "地图仓库目录", desc: "服务器侧地图存储位置（版本化）", kind: "readonly" },
   { cat: "service", key: "fleet_addr", label: "fleet-hub 监听地址", desc: "云端聚合服务（REST/WS/静态站）", kind: "readonly" },
-  { cat: "service", key: "mqtt_addr", label: "MQTT Broker 地址", desc: "车云上行通道（mTLS）", kind: "text" },
-  { cat: "service", key: "authority_addr", label: "控制权服务地址", desc: "control-authority（接管租约/急停）", kind: "text" },
+  { cat: "service", key: "mqtt_addr", label: "MQTT Broker 地址", desc: "启动参数管理；运行中不可在浏览器热切换", kind: "readonly" },
+  { cat: "service", key: "authority_addr", label: "控制权服务", desc: "Fleet 内嵌的持久化 Authority；不允许浏览器重定向安全控制流", kind: "readonly" },
   { cat: "service", key: "mqtt_tls", label: "MQTT mTLS 状态", desc: "车云链路证书双向认证（当前为启用）", kind: "switch" },
   { cat: "vehicle", key: "chassis_type", label: "默认底盘类型", desc: "影响轮速/转向展示与遥控语义", kind: "select", options: [
     { v: "ackermann", label: "阿克曼" },
@@ -46,9 +46,23 @@ const FIELDS: FieldDef[] = [
   { cat: "vehicle", key: "map_push_s", label: "地图上报周期（秒）", desc: "车端地图实时上报间隔（sha256 去重）", kind: "number" },
   { cat: "security", key: "open_api_enabled", label: "开放 API 总开关", desc: "/open/v1/* 对外接口", kind: "switch" },
   { cat: "security", key: "audit_enabled", label: "审计记录", desc: "调用审计（含失败）留存", kind: "switch" },
+  { cat: "security", key: "open_api_key_default_lifetime_s", label: "API Key 默认有效期（秒）", desc: "创建时未指定有效期的默认时长；永久 Key 禁止", kind: "number" },
+  { cat: "security", key: "open_api_key_max_lifetime_s", label: "API Key 最大有效期（秒）", desc: "任何 Key 都不能超过此时长，最大 365 天", kind: "number" },
   { cat: "security", key: "replay_window_s", label: "防重放窗口（秒）", desc: "签名时间戳允许偏差", kind: "number" },
   { cat: "security", key: "rate_limit", label: "限流（次/10s/Key）", desc: "每个 API Key 的调用频率上限", kind: "number" },
+  { cat: "security", key: "open_lockout_threshold", label: "鉴权失败锁定（次）", desc: "窗口内失败多少次即锁定来源（等保三级）", kind: "number" },
+  { cat: "security", key: "open_lockout_window_s", label: "失败计数窗口（秒）", desc: "失败次数在此窗口内累计", kind: "number" },
+  { cat: "security", key: "open_lockout_seconds", label: "锁定时长（秒）", desc: "触发锁定后拒绝调用的时长", kind: "number" },
 ];
+
+// These values are browser presentation/integration settings. They are
+// deliberately never sent to the server as authoritative platform config.
+const SERVER_CONFIG_KEYS = new Set([
+  "tdt_tk", "tdt_origin", "bev_cell", "mqtt_tls", "chassis_type", "telemetry_hz",
+  "map_push_s", "open_api_enabled", "audit_enabled", "replay_window_s", "rate_limit",
+  "open_lockout_threshold", "open_lockout_window_s", "open_lockout_seconds",
+  "open_api_key_default_lifetime_s", "open_api_key_max_lifetime_s",
+]);
 
 export default function SettingsModal({ onClose }: Props) {
   const [cat, setCat] = useState("map");
@@ -83,7 +97,7 @@ export default function SettingsModal({ onClose }: Props) {
     try {
       const body: Record<string, unknown> = {};
       for (const f of FIELDS) {
-        if (f.kind === "readonly") continue;
+        if (f.kind === "readonly" || !SERVER_CONFIG_KEYS.has(f.key)) continue;
         body[f.key] = cfg[f.key];
       }
       await saveConfig(body);

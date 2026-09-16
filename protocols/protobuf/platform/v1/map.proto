@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package platform.v1;
+
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
+// Map publication is a reliable vehicle command.  The command carries only
+// immutable metadata; the vehicle obtains the content through its authenticated
+// map channel and must return a signed acknowledgement before activation.
+enum MapPublicationAction {
+  MAP_PUBLICATION_ACTION_UNSPECIFIED = 0;
+  MAP_PUBLICATION_ACTION_APPLY = 1;
+  MAP_PUBLICATION_ACTION_ROLLBACK = 2;
+}
+
+message MapPublicationCommand {
+  uint32 version = 1;
+  MapPublicationAction action = 2;
+  string publication_id = 3;
+  string map_id = 4;
+  string vehicle_id = 5;
+  uint32 map_version = 6;
+  string content_sha256 = 7;
+  string coordinate_frame = 8;
+  string compatibility_entry = 9;
+  string rollback_publication_id = 10;
+  string trace_id = 11;
+}
+
+enum MapPublicationResult {
+  MAP_PUBLICATION_RESULT_UNSPECIFIED = 0;
+  MAP_PUBLICATION_RESULT_ACCEPTED = 1;
+  MAP_PUBLICATION_RESULT_REJECTED = 2;
+  MAP_PUBLICATION_RESULT_APPLIED = 3;
+  MAP_PUBLICATION_RESULT_FAILED = 4;
+}
+
+message MapPublicationAck {
+  string publication_id = 1;
+  string map_id = 2;
+  string vehicle_id = 3;
+  uint32 map_version = 4;
+  MapPublicationResult result = 5;
+  string detail = 6;
+  int64 applied_at_unix_ns = 7;
+}

@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package platform.v1;
 
+option go_package = "robot-agent/protocols/platform/v1;platformv1";
+
 import "platform/v1/control.proto";
 
 // 能力协商（对应架构文档 §6.4）。车辆上线时发送，
@@ -68,4 +70,8 @@ message GatewayCapabilities {
   MapCapability map = 12;
   string adapter_version = 13;
   string safety_arbiter_version = 14;
+
+  // 车辆侧已审核的底盘/项目归属，不由云端根据固定车辆推断。
+  string chassis_type = 15;
+  string group_id = 16;
 }

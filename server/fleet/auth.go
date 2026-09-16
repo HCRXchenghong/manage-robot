@@ -9,16 +9,22 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"log"
+	"math/big"
 	mrand "math/rand"
-	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +43,7 @@ const (
 	sessionIdleTTL   = 30 * time.Minute
 	sessionAbsTTL    = 8 * time.Hour
 	passwordLifetime = 180 * 24 * time.Hour // 等保：密码最长使用期限
+	csrfCookieName   = "ra_csrf"
 )
 
 // ---------- 图形验证码 ----------
@@ -200,6 +207,7 @@ type AuthStore struct {
 	groups   *GroupStore
 	st       *State
 	open     *OpenAPI
+	db       *sql.DB
 }
 
 // preauth 账密已通过、等待人机验证的中间态（5 分钟、一次性）。
@@ -209,20 +217,224 @@ type preauth struct {
 }
 
 func NewAuthStore(groups *GroupStore, st *State, open *OpenAPI) *AuthStore {
-	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, preauths: map[string]*preauth{}, sms: map[string]*smsEntry{}, groups: groups, st: st, open: open}
+	var db *sql.DB
+	if st != nil {
+		db = st.db
+	}
+	a := &AuthStore{users: map[string]*User{}, sessions: map[string]*Session{}, captchas: map[string]*captcha{}, preauths: map[string]*preauth{}, sms: map[string]*smsEntry{}, groups: groups, st: st, open: open, db: db}
+	a.loadUsers()
+	a.loadSessions()
 	go a.cleanupLoop()
 	return a
 }
 
+// loadUsers hydrates the in-process authorization cache from the production
+// database. A service restart must never recreate accounts from source code.
+func (a *AuthStore) loadUsers() {
+	if a.db == nil {
+		return
+	}
+	rows, err := a.db.Query(`SELECT username, display_name, role, group_ids::text,
+		COALESCE(phone, ''), pass_hash, salt,
+		(EXTRACT(EPOCH FROM created_at) * 1000000000)::bigint,
+		(EXTRACT(EPOCH FROM pass_set_at) * 1000000000)::bigint FROM auth_users`)
+	if err != nil {
+		log.Printf("[auth] 加载用户失败: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		u := &User{}
+		var groupsJSON string
+		if err := rows.Scan(&u.Username, &u.DisplayName, &u.Role, &groupsJSON, &u.Phone, &u.PassHash, &u.Salt, &u.CreatedNS, &u.PassSetNS); err != nil {
+			log.Printf("[auth] 读取用户失败: %v", err)
+			continue
+		}
+		if err := json.Unmarshal([]byte(groupsJSON), &u.Groups); err != nil {
+			log.Printf("[auth] 用户 %s 的分组数据无效: %v", u.Username, err)
+			continue
+		}
+		a.users[u.Username] = u
+	}
+}
+
+// persistUserLocked synchronously commits an identity before the caller
+// reports success. Caller must hold a.mu.
+func (a *AuthStore) persistUserLocked(u *User) error {
+	if a.db == nil {
+		return nil
+	}
+	groupsJSON, err := json.Marshal(u.Groups)
+	if err != nil {
+		return err
+	}
+	_, err = a.db.Exec(`INSERT INTO auth_users(username, display_name, role, group_ids, phone, pass_hash, salt, created_at, pass_set_at)
+		VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9)
+		ON CONFLICT (username) DO UPDATE SET display_name=$2, role=$3, group_ids=$4::jsonb, phone=$5, pass_hash=$6, salt=$7, pass_set_at=$9`,
+		u.Username, u.DisplayName, u.Role, string(groupsJSON), nullable(u.Phone), u.PassHash, u.Salt, time.Unix(0, u.CreatedNS), time.Unix(0, u.PassSetNS))
+	return err
+}
+
+// ---------- PostgreSQL 会话：跨重启/多实例恢复，绝不落盘明文 token ----------
+
+func sessionTokenHash(token string) string {
+	sum := sha256.Sum256([]byte("robot-agent/session/v1:" + token))
+	return hex.EncodeToString(sum[:])
+}
+
+// loadSessions 清理过期数据库记录。会话本身按请求懒加载：数据库只保存
+// token 摘要，服务重启后可用浏览器携带的原 token 通过摘要查回，不需要
+// 也不能从数据库反推出 token 明文。
+func (a *AuthStore) loadSessions() {
+	if a.db == nil {
+		return
+	}
+	if _, err := a.db.Exec(`DELETE FROM auth_sessions
+		WHERE revoked_at IS NOT NULL
+		   OR last_use_at <= now() - interval '30 minutes'
+		   OR created_at <= now() - interval '8 hours'`); err != nil {
+		log.Printf("[auth] 清理过期会话失败: %v", err)
+	}
+}
+
+func (a *AuthStore) restoreSession(token string) (*Session, error) {
+	if a.db == nil || token == "" {
+		return nil, nil
+	}
+	var s Session
+	var groupsJSON string
+	var createdNS, lastUseNS int64
+	err := a.db.QueryRow(`SELECT username, role, group_ids::text,
+		(EXTRACT(EPOCH FROM created_at) * 1000000000)::bigint,
+		(EXTRACT(EPOCH FROM last_use_at) * 1000000000)::bigint
+		FROM auth_sessions
+		WHERE token_hash=$1 AND revoked_at IS NULL
+		  AND last_use_at > now() - interval '30 minutes'
+		  AND created_at > now() - interval '8 hours'`, sessionTokenHash(token)).Scan(
+		&s.Username, &s.Role, &groupsJSON, &createdNS, &lastUseNS)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(groupsJSON), &s.Groups); err != nil {
+		return nil, fmt.Errorf("会话分组数据无效: %w", err)
+	}
+	s.Token, s.CreatedNS, s.lastUse = token, createdNS, time.Unix(0, lastUseNS)
+	return &s, nil
+}
+
+// persistSession 创建或刷新一条会话；调用方不得持有 a.mu。
+func (a *AuthStore) persistSession(s *Session) error {
+	if a.db == nil {
+		return nil
+	}
+	groupsJSON, err := json.Marshal(s.Groups)
+	if err != nil {
+		return err
+	}
+	var result sql.Result
+	result, err = a.db.Exec(`INSERT INTO auth_sessions(token_hash, username, role, group_ids, created_at, last_use_at)
+		VALUES ($1,$2,$3,$4::jsonb,$5,$6)
+		ON CONFLICT (token_hash) DO UPDATE SET
+		  username=$2, role=$3, group_ids=$4::jsonb, last_use_at=$6
+		WHERE auth_sessions.revoked_at IS NULL`,
+		sessionTokenHash(s.Token), s.Username, s.Role, string(groupsJSON),
+		time.Unix(0, s.CreatedNS), s.lastUse)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected != 1 {
+		return fmt.Errorf("会话已被撤销")
+	}
+	return nil
+}
+
+func (a *AuthStore) revokeSession(token string) error {
+	if a.db == nil || token == "" {
+		return nil
+	}
+	_, err := a.db.Exec(`UPDATE auth_sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL`, sessionTokenHash(token))
+	return err
+}
+
+// auditSystem writes operator/session lifecycle evidence to the append-only
+// platform audit stream. Session tokens and passwords are never included.
+func (a *AuthStore) auditSystem(actor, action string, detail map[string]any) {
+	if a == nil || a.db == nil || strings.TrimSpace(action) == "" {
+		return
+	}
+	if detail == nil {
+		detail = map[string]any{}
+	}
+	if _, err := a.db.Exec(`INSERT INTO audit_logs(actor, action, detail) VALUES ($1,$2,$3::jsonb)`,
+		strings.TrimSpace(actor), action, mustJSON(detail)); err != nil {
+		log.Printf("[auth] 平台审计写入失败: %v", err)
+	}
+}
+
 func randToken(n int) string {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Token generation is a security boundary. Continuing with a predictable
+		// token would be materially worse than failing the process closed.
+		panic("crypto/rand unavailable: " + err.Error())
+	}
 	return hex.EncodeToString(b)
 }
 
+const passwordKDFIterations = 310000
+
 func hashPassword(salt, pwd string) string {
+	derived := pbkdf2SHA256([]byte(pwd), []byte(salt), passwordKDFIterations, sha256.Size)
+	return fmt.Sprintf("pbkdf2-sha256$%d$%s", passwordKDFIterations, hex.EncodeToString(derived))
+}
+
+// pbkdf2SHA256 is local to keep the fleet binary's crypto dependency small.
+// New passwords always use a salted, deliberately expensive KDF; legacy
+// single-SHA256 records are accepted only for migration compatibility.
+func pbkdf2SHA256(password, salt []byte, iterations, keyLen int) []byte {
+	out := make([]byte, 0, keyLen)
+	for block := uint32(1); len(out) < keyLen; block++ {
+		h := hmac.New(sha256.New, password)
+		_, _ = h.Write(salt)
+		_, _ = h.Write([]byte{byte(block >> 24), byte(block >> 16), byte(block >> 8), byte(block)})
+		u := h.Sum(nil)
+		t := append([]byte(nil), u...)
+		for i := 1; i < iterations; i++ {
+			h = hmac.New(sha256.New, password)
+			_, _ = h.Write(u)
+			u = h.Sum(nil)
+			for j := range t {
+				t[j] ^= u[j]
+			}
+		}
+		out = append(out, t...)
+	}
+	return out[:keyLen]
+}
+
+func verifyPassword(salt, pwd, stored string) bool {
+	parts := strings.Split(stored, "$")
+	if len(parts) == 3 && parts[0] == "pbkdf2-sha256" {
+		iterations, err := strconv.Atoi(parts[1])
+		if err != nil || iterations < 100000 || iterations > 1000000 {
+			return false
+		}
+		want, err := hex.DecodeString(parts[2])
+		if err != nil || len(want) != sha256.Size {
+			return false
+		}
+		got := pbkdf2SHA256([]byte(pwd), []byte(salt), iterations, len(want))
+		return subtle.ConstantTimeCompare(got, want) == 1
+	}
+	// Compatibility only for records created before the KDF migration. No new
+	// record can be created in this format because hashPassword never emits it.
 	h := sha256.Sum256([]byte(salt + ":" + pwd))
-	return hex.EncodeToString(h[:])
+	return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(h[:])), []byte(stored)) == 1
 }
 
 // PasswordOK 等保密码复杂度：≥8 位，且含 大写/小写/数字/符号 中至少 3 类。
@@ -265,19 +477,28 @@ func (a *AuthStore) SeedUser(username, displayName, pwd, role string, groups []s
 		return
 	}
 	salt := randToken(8)
-	a.users[username] = &User{
+	u := &User{
 		Username: username, DisplayName: displayName, Role: role, Groups: groups,
 		PassHash: hashPassword(salt, pwd), Salt: salt,
 		CreatedNS: time.Now().UnixNano(), PassSetNS: time.Now().UnixNano(),
 	}
+	if err := a.persistUserLocked(u); err != nil {
+		log.Printf("[auth] 初始化管理员持久化失败: %v", err)
+		return
+	}
+	a.users[username] = u
 }
 
 // NewCaptcha 生成新验证码。
 func (a *AuthStore) NewCaptcha() (id, imageB64 string) {
 	text := ""
-	rng := mrand.New(mrand.NewSource(time.Now().UnixNano()))
+	max := big.NewInt(int64(len(captchaAlphabet)))
 	for i := 0; i < 4; i++ {
-		text += string(captchaAlphabet[rng.Intn(len(captchaAlphabet))])
+		n, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			panic("crypto/rand unavailable: " + err.Error())
+		}
+		text += string(captchaAlphabet[n.Int64()])
 	}
 	id = randToken(8)
 	a.mu.Lock()
@@ -326,7 +547,7 @@ func (a *AuthStore) LoginPassword(username, pwd, ip string) (string, string, err
 		a.auditLogin(username, ip, "auth_failed", "账号锁定中")
 		return "", "", fmt.Errorf("账号已锁定，请 %d 分钟后再试", left+1)
 	}
-	if hashPassword(u.Salt, pwd) != u.PassHash {
+	if !verifyPassword(u.Salt, pwd, u.PassHash) {
 		u.FailCount++
 		msg := "账号或密码错误"
 		if u.FailCount >= lockAfterFails {
@@ -375,59 +596,27 @@ func (a *AuthStore) FinishLogin(preToken, capID, capAns, ip string) (*Session, e
 		Groups:    append([]string(nil), u.Groups...),
 		CreatedNS: time.Now().UnixNano(), lastUse: time.Now(),
 	}
+	a.mu.Unlock()
+	if err := a.persistSession(sess); err != nil {
+		return nil, fmt.Errorf("会话持久化失败: %w", err)
+	}
+	a.mu.Lock()
 	a.sessions[sess.Token] = sess
 	a.mu.Unlock()
 	a.auditLogin(u.Username, ip, "ok", "人机验证通过，登录成功")
 	if a.st != nil {
-		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", u.DisplayName, u.Role))
+		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", u.DisplayName, u.Role), "sys")
 	}
 	return sess, nil
 }
 
-// SendSmsCode 发送短信验证码。演示环境未接短信网关：验证码原样返回前端展示；
-// 生产应替换为真实短信通道（阿里云/腾讯云短信），并去掉返回值里的明文码。
+// SendSmsCode requires a configured out-of-band SMS provider. The platform
+// deliberately does not generate or expose a substitute code.
 func (a *AuthStore) SendSmsCode(phone string) (string, error) {
 	if !validCNPhone(phone) {
 		return "", fmt.Errorf("手机号格式不正确")
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var owner *User
-	for _, u := range a.users {
-		if u.Phone == phone {
-			owner = u
-			break
-		}
-	}
-	if owner == nil {
-		return "", fmt.Errorf("该手机号未绑定本平台账号，请联系管理员绑定")
-	}
-	now := time.Now()
-	day := now.Format("2006-01-02")
-	e := a.sms[phone]
-	if e == nil {
-		e = &smsEntry{}
-		a.sms[phone] = e
-	}
-	if !e.lastSend.IsZero() {
-		if wait := smsCooldown - now.Sub(e.lastSend); wait > 0 {
-			return "", fmt.Errorf("请 %d 秒后再发送", int(wait.Seconds())+1)
-		}
-	}
-	if e.dayKey != day {
-		e.dayKey = day
-		e.dayCount = 0
-	}
-	if e.dayCount >= smsDailyMax {
-		return "", fmt.Errorf("今日发送次数已达上限，请明日再试")
-	}
-	code := fmt.Sprintf("%06d", mrand.Intn(1000000))
-	e.code = code
-	e.exp = now.Add(smsTTL)
-	e.tries = 0
-	e.lastSend = now
-	e.dayCount++
-	return code, nil
+	return "", fmt.Errorf("短信网关尚未配置")
 }
 
 // LoginPhone 手机号+短信验证码登录：短信码本身即人机验证，通过直接发会话。
@@ -472,11 +661,16 @@ func (a *AuthStore) LoginPhone(phone, code, ip string) (*Session, error) {
 		Groups:    append([]string(nil), owner.Groups...),
 		CreatedNS: time.Now().UnixNano(), lastUse: time.Now(),
 	}
+	a.mu.Unlock()
+	if err := a.persistSession(sess); err != nil {
+		return nil, fmt.Errorf("会话持久化失败: %w", err)
+	}
+	a.mu.Lock()
 	a.sessions[sess.Token] = sess
 	a.mu.Unlock()
 	a.auditLogin(owner.Username, ip, "ok", "手机号+短信验证码登录成功")
 	if a.st != nil {
-		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", owner.DisplayName, owner.Role))
+		a.st.pushEvent("info", "", fmt.Sprintf("用户登录：%s（%s）", owner.DisplayName, owner.Role), "sys")
 	}
 	return sess, nil
 }
@@ -495,11 +689,16 @@ func (a *AuthStore) SetPhone(username, phone string) (*User, error) {
 	if phone != "" {
 		for n, o := range a.users {
 			if o.Phone == phone && n != username {
-				return nil, fmt.Errorf("该手机号已绑定账号 " + n)
+				return nil, fmt.Errorf("该手机号已绑定账号 %s", n)
 			}
 		}
 	}
+	old := u.Phone
 	u.Phone = phone
+	if err := a.persistUserLocked(u); err != nil {
+		u.Phone = old
+		return nil, fmt.Errorf("保存手机号失败: %w", err)
+	}
 	return u, nil
 }
 
@@ -512,21 +711,89 @@ func (a *AuthStore) auditLogin(username, ip, result, detail string) {
 	}
 }
 
-// SessionByToken 取会话并滑动续期。
+func cloneSession(s *Session) *Session {
+	if s == nil {
+		return nil
+	}
+	out := *s
+	out.Groups = append([]string(nil), s.Groups...)
+	return &out
+}
+
+// SessionByToken 取会话并滑动续期。返回副本，避免请求在锁外读取到被管理员并发修改的会话。
 func (a *AuthStore) SessionByToken(token string) *Session {
+	if token == "" {
+		return nil
+	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	s, ok := a.sessions[token]
-	if !ok {
+	if ok {
+		now := time.Now()
+		if now.Sub(s.lastUse) > sessionIdleTTL || now.Sub(time.Unix(0, s.CreatedNS)) > sessionAbsTTL {
+			username := s.Username
+			delete(a.sessions, token)
+			a.mu.Unlock()
+			_ = a.revokeSession(token)
+			a.auditSystem(username, "auth.session_expired", map[string]any{"reason": "idle_or_absolute_ttl"})
+			return nil
+		}
+		s.lastUse = now
+		out := cloneSession(s)
+		a.mu.Unlock()
+		if err := a.persistSession(out); err != nil {
+			log.Printf("[auth] 更新会话失败: %v", err)
+			return nil
+		}
+		return out
+	}
+	a.mu.Unlock()
+	restored, err := a.restoreSession(token)
+	if err != nil || restored == nil {
+		if err != nil {
+			log.Printf("[auth] 恢复会话失败: %v", err)
+		}
 		return nil
 	}
-	now := time.Now()
-	if now.Sub(s.lastUse) > sessionIdleTTL || now.Sub(time.Unix(0, s.CreatedNS)) > sessionAbsTTL {
-		delete(a.sessions, token)
+	restored.lastUse = time.Now()
+	if err := a.persistSession(restored); err != nil {
+		log.Printf("[auth] 更新恢复会话失败: %v", err)
 		return nil
 	}
-	s.lastUse = now
-	return s
+	a.mu.Lock()
+	a.sessions[token] = restored
+	a.mu.Unlock()
+	return cloneSession(restored)
+}
+
+// SessionSnapshot returns the current, immutable authorization view for a long-lived
+// connection without extending the session's idle timeout. WebSocket clients use it
+// before every fan-out so logout, password reset, and group changes take effect there too.
+func (a *AuthStore) SessionSnapshot(token string) *Session {
+	a.mu.Lock()
+	s, ok := a.sessions[token]
+	if ok {
+		now := time.Now()
+		if now.Sub(s.lastUse) > sessionIdleTTL || now.Sub(time.Unix(0, s.CreatedNS)) > sessionAbsTTL {
+			username := s.Username
+			delete(a.sessions, token)
+			a.mu.Unlock()
+			_ = a.revokeSession(token)
+			a.auditSystem(username, "auth.session_expired", map[string]any{"reason": "idle_or_absolute_ttl"})
+			return nil
+		}
+		out := cloneSession(s)
+		a.mu.Unlock()
+		return out
+	}
+	a.mu.Unlock()
+	restored, err := a.restoreSession(token)
+	if err != nil || restored == nil {
+		return nil
+	}
+	a.mu.Lock()
+	a.sessions[token] = restored
+	a.mu.Unlock()
+	return cloneSession(restored)
 }
 
 // SessionFromRequest 从 Cookie 解会话。
@@ -544,30 +811,84 @@ func (a *AuthStore) Logout(r *http.Request) {
 		return
 	}
 	a.mu.Lock()
+	sess, _ := a.sessions[c.Value]
+	username := ""
+	if sess != nil {
+		username = sess.Username
+	}
 	delete(a.sessions, c.Value)
 	a.mu.Unlock()
+	if err := a.revokeSession(c.Value); err != nil {
+		log.Printf("[auth] 撤销会话失败: %v", err)
+	}
+	a.auditSystem(username, "auth.logout", map[string]any{"session_revoked": true})
+}
+
+func unsafeMethod(method string) bool {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	default:
+		return true
+	}
+}
+
+func validCSRFRequest(r *http.Request) bool {
+	if r == nil || !unsafeMethod(r.Method) || !strings.HasPrefix(r.URL.Path, "/api/") {
+		return true
+	}
+	cookie, err := r.Cookie(csrfCookieName)
+	if err != nil || cookie.Value == "" {
+		return false
+	}
+	header := strings.TrimSpace(r.Header.Get("X-CSRF-Token"))
+	if header == "" || len(header) != len(cookie.Value) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(header), []byte(cookie.Value)) == 1
 }
 
 // RefreshSessionGroups 用户分组被管理员调整后，同步其活跃会话。
 func (a *AuthStore) RefreshSessions(username string, groups []string, role string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var changed []*Session
 	for _, s := range a.sessions {
 		if s.Username == username {
 			s.Groups = append([]string(nil), groups...)
 			s.Role = role
+			changed = append(changed, cloneSession(s))
+		}
+	}
+	a.mu.Unlock()
+	for _, s := range changed {
+		if err := a.persistSession(s); err != nil {
+			log.Printf("[auth] 刷新会话权限失败: %v", err)
 		}
 	}
 }
 
 // KillSessions 改密后踢掉除当前会话外的全部会话（等保）。
 func (a *AuthStore) KillSessions(username, exceptToken string) {
+	a.killSessions(username, exceptToken, "", "auth.sessions_revoked")
+}
+
+func (a *AuthStore) killSessions(username, exceptToken, actor, action string) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	var revoked []string
 	for t, s := range a.sessions {
 		if s.Username == username && t != exceptToken {
 			delete(a.sessions, t)
+			revoked = append(revoked, t)
 		}
+	}
+	a.mu.Unlock()
+	for _, token := range revoked {
+		if err := a.revokeSession(token); err != nil {
+			log.Printf("[auth] 撤销旧会话失败: %v", err)
+		}
+	}
+	if len(revoked) > 0 {
+		a.auditSystem(actor, action, map[string]any{"target_username": username, "count": len(revoked)})
 	}
 }
 
@@ -593,6 +914,14 @@ func (a *AuthStore) cleanupLoop() {
 			}
 		}
 		a.mu.Unlock()
+		if a.db != nil {
+			if _, err := a.db.Exec(`DELETE FROM auth_sessions
+				WHERE revoked_at IS NOT NULL
+				   OR last_use_at <= now() - interval '30 minutes'
+				   OR created_at <= now() - interval '8 hours'`); err != nil {
+				log.Printf("[auth] 会话清理失败: %v", err)
+			}
+		}
 	}
 }
 
@@ -604,26 +933,40 @@ const ctxSession ctxKey = "session"
 
 func isPublicPath(p string) bool {
 	switch p {
-	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/api/captcha", "/api/auth/login", "/api/auth/verify", "/api/auth/sms/send", "/api/auth/login-phone":
+	case "/", "/login", "/index.html", "/favicon.ico", "/robots.txt", "/healthz", "/readyz", "/metrics", "/api/captcha", "/api/auth/csrf", "/api/auth/login", "/api/auth/verify", "/api/auth/sms/send", "/api/auth/login-phone":
 		return true
 	}
 	return strings.HasPrefix(p, "/assets/")
 }
 
-func isLoopback(r *http.Request) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return false
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-// Middleware 全站鉴权：未登录挡在门外；/api/maps/upload 放行本机车端上报。
+// Middleware 全站鉴权：未登录挡在门外；/open/v1/* 是对外开放面，
+// 走自带的 API Key + HMAC 鉴权（不依赖登录会话）。车端不复用本机环回绕过，
+// 应经 MQTT mTLS 或独立的设备证书通道接入。
 func (a *AuthStore) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if isPublicPath(p) || (p == "/api/maps/upload" && isLoopback(r)) {
+		// Volatile mode is for read-only local diagnosis. Authentication itself
+		// may use an in-memory session so the operator can inspect the service,
+		// but no business, identity, map, device, takeover, or safety write may
+		// report success without PostgreSQL durability.
+		if a.st != nil && a.st.db == nil && r.Method != http.MethodGet &&
+			r.Method != http.MethodHead && r.Method != http.MethodOptions &&
+			p != "/api/auth/login" && p != "/api/auth/verify" &&
+			p != "/api/auth/logout" && p != "/api/captcha" {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{
+				"error": "当前为 volatile 诊断模式，PostgreSQL 未就绪；所有业务写操作已禁用",
+				"code":  "PERSISTENCE_REQUIRED",
+			})
+			return
+		}
+		if !validCSRFRequest(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "缺少或无效的 CSRF 令牌",
+				"code":  "CSRF_FAILED",
+			})
+			return
+		}
+		if isPublicPath(p) || strings.HasPrefix(p, "/open/v1/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -689,6 +1032,7 @@ func b64(b []byte) string {
 	}
 	return sb.String()
 }
+
 // CheckCreds 校验账密（敏感操作二次确认用，如清除日志）：不建会话、不触发锁定计数。
 func (a *AuthStore) CheckCreds(username, pwd string) (string, bool) {
 	a.mu.Lock()
@@ -697,7 +1041,7 @@ func (a *AuthStore) CheckCreds(username, pwd string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if hashPassword(u.Salt, pwd) != u.PassHash {
+	if !verifyPassword(u.Salt, pwd, u.PassHash) {
 		return "", false
 	}
 	return u.Role, true

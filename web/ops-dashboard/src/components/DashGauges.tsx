@@ -28,6 +28,7 @@ export function DialGauge({
   digits = 1,
   color = "#38bdf8",
   sub,
+  tight = false,
 }: {
   value: number;
   max: number;
@@ -36,13 +37,14 @@ export function DialGauge({
   digits?: number;
   color?: string;
   sub?: string;
+  tight?: boolean; // 裁掉表盘 viewBox 四周留白，同样容器下表盘显得更大
 }) {
   const frac = Math.min(1, Math.max(0, value / max));
   const ang = A0 + (A1 - A0) * frac;
   const [nx, ny] = polar(50, 50, 28, ang);
   return (
     <div className="dial">
-      <svg viewBox="0 0 100 100">
+      <svg viewBox={tight ? "7 7 86 86" : "0 0 100 100"}>
         <path d={arcPath(50, 50, 40, A0, A1)} className="dial-track" />
         <path d={arcPath(50, 50, 40, A0, Math.max(A0 + 0.5, ang))} className="dial-fill" style={{ stroke: color }} />
         {Array.from({ length: 7 }, (_, i) => {
@@ -56,7 +58,7 @@ export function DialGauge({
       </svg>
       <div className="dial-read">
         <div className="dial-val mono" style={{ color }}>{value.toFixed(digits)}</div>
-        <div className="dial-unit">{unit} · {label}</div>
+        <div className="dial-unit">{label ? unit + " · " + label : unit}</div>
         {sub ? <div className="dial-sub mono">{sub}</div> : null}
       </div>
     </div>
@@ -162,8 +164,8 @@ export function SignalTable({ v, showSource }: { v: VehicleSnap; showSource?: bo
     ["总电压", v.voltage.toFixed(1), "V", "Vehicle.Powertrain.TractionBattery.Voltage"],
     ["机内温度", (v.cabin_temp_c ?? 26).toFixed(1), "°C", "Vehicle.Cabin.Temperature.C"],
     ["机内湿度", (v.cabin_humidity_pct ?? 45).toFixed(0), "%", "Vehicle.Cabin.Humidity.Pct"],
-    ["位姿 X / Y", v.pose.x.toFixed(1) + " / " + v.pose.y.toFixed(1), "m", "Vehicle.Pose"],
-    ["航向 yaw", v.pose.yaw.toFixed(2), "rad", "Vehicle.Pose.Yaw"],
+    ["位姿 X / Y", v.pose.valid ? v.pose.x.toFixed(1) + " / " + v.pose.y.toFixed(1) : "未上报", "m", "Platform.Autonomy.Localization.Pose"],
+    ["航向 yaw", v.pose.valid ? v.pose.yaw.toFixed(2) : "未上报", "rad", "Platform.Autonomy.Localization.Pose.Yaw"],
     ["GPS 纬 / 经", v.gps.lat.toFixed(5) + " / " + v.gps.lon.toFixed(5), "°", "Vehicle.GPS.*"],
     ["心跳龄", v.last_heartbeat_age_s.toFixed(1), "s", "Platform.Heartbeat"],
   ];

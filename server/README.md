@@ -5,7 +5,7 @@
 | 目录 | 职责 |
 |---|---|
 | `api/` | 管理 API（车辆、用户、权限等），面向 web |
-| `vehicle-access/` | MQTT 接入、连接、心跳、能力协商 |
+| `fleet/` | MQTT 接入、车辆注册、连接、心跳、能力协商与运营控制平面 |
 | `control-authority/` | 接管审批、控制权租约、fencing token |
 | `control-relay/` | 双 QUIC 边缘转发（控制命令双发） |
 | `media-control/` | 媒体会话与 SFU 编排 |
